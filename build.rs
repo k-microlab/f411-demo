@@ -11,6 +11,9 @@ fn main() {
         .write_all(include_bytes!("memory.x"))
         .unwrap();
     println!("cargo:rustc-link-search={}", out.display());
+    println!("cargo:rustc-link-arg-bins=--nmagic");
+    println!("cargo:rustc-link-arg-bins=-Tlink.x");
+    println!("cargo:rustc-link-arg-bins=-Tdefmt.x");
 
     // Only re-run the build script when memory.x is changed,
     // instead of when any part of the source code changes.
