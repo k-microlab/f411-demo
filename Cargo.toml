@@ -11,5 +11,5 @@ cortex-m-rt = "0.7.1"
 panic-semihosting = "0.6.0"
 
 [dependencies.stm32f4xx-hal]
-version = "0.13.2"
-features = ["stm32f411", "rt"]
+version = "0.15.0"
+features = ["stm32f407", "rt"]
