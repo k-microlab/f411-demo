@@ -8,8 +8,10 @@ edition = "2021"
 [dependencies]
 cortex-m = "0.7.4"
 cortex-m-rt = "0.7.1"
-panic-semihosting = "0.6.0"
+panic-halt = "1.0.0"
+defmt = "1"
+defmt-rtt = "1.1.0"
 
 [dependencies.stm32f4xx-hal]
 version = "0.15.0"
-features = ["stm32f407", "rt"]
+features = ["stm32f407", "rt", "defmt"]
