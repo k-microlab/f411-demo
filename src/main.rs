@@ -3,14 +3,20 @@
 
 use defmt::*;
 use embassy_executor::Spawner;
+use embassy_stm32::exti::ExtiInput;
 use embassy_stm32::spi::{Config, Spi};
 use embassy_stm32::time::Hertz;
 use embassy_stm32::gpio::{Input, Level, Output, Pull, Speed};
 use embassy_stm32::mode::Async;
-use embassy_stm32::spi;
+use embassy_stm32::{bind_interrupts, exti, interrupt, spi};
 use embassy_stm32::spi::mode::Master;
 use embassy_time::Timer;
 use {defmt_rtt as _, panic_probe as _};
+
+bind_interrupts!(struct Irqs {
+    EXTI2 => exti::InterruptHandler<interrupt::typelevel::EXTI2>;
+    EXTI4 => exti::InterruptHandler<interrupt::typelevel::EXTI4>;
+});
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
@@ -19,8 +25,8 @@ async fn main(spawner: Spawner) {
 
     let cs = Output::new(p.PB0, Level::High, Speed::Medium);
     let reset = Output::new(p.PB1, Level::High, Speed::Medium);
-    let busy = Input::new(p.PB2, Pull::Down);
-    let dio1 = Input::new(p.PA4, Pull::Down);
+    let busy = ExtiInput::new(p.PB2, p.EXTI2, Pull::Down, Irqs);
+    let dio1 = ExtiInput::new(p.PA4, p.EXTI4, Pull::Down, Irqs);
     let dio2 = Input::new(p.PA3, Pull::Down);
     let dio3 = Input::new(p.PA2, Pull::Down);
     let dio4 = Input::new(p.PA1, Pull::Down);
@@ -30,7 +36,7 @@ async fn main(spawner: Spawner) {
     let spi = Spi::new(p.SPI1, p.PA5, p.PA7, p.PA6, p.DMA2_CH3, p.DMA2_CH2, spi_config);
     info!("SPI setup!");
 
-    let mut radio = Radio::new(spi, cs, busy, reset, dio1, dio2, dio3, dio4, OutputPower::Db22, LoraBandwidth::BW_7, LoraSpreadingFactor::SF12).await.unwrap();
+    let mut radio = Radio::new(spi, cs, busy, reset, dio1, dio2, dio3, dio4, OutputPower::Db22, LoraBandwidth::BW_7, LoraSpreadingFactor::SF12, RampTime::R200, LoraCodingRate::CR_4_5).await.unwrap();
 
     info!("Packet Length = {}", radio.read_reg(reg::PACKET_LENGTH).await.unwrap());
 
@@ -46,20 +52,22 @@ async fn main(spawner: Spawner) {
 struct Radio<'a> {
     spi: Spi<'a, Async, Master>,
     cs: Output<'a>,
-    busy: Input<'a>,
+    busy: ExtiInput<'a>,
     reset: Output<'a>,
-    dio1: Input<'a>,
+    dio1: ExtiInput<'a>,
     dio2: Input<'a>,
     dio3: Input<'a>,
     dio4: Input<'a>,
     power: OutputPower,
     bandwidth: LoraBandwidth,
+    ramp_time: RampTime,
+    coding_rate: LoraCodingRate,
 }
 
 impl<'a> Radio<'a> {
-    async fn new(spi: Spi<'a, Async, Master>, cs: Output<'a>, busy: Input<'a>, reset: Output<'a>, dio1: Input<'a>, dio2: Input<'a>, dio3: Input<'a>, dio4: Input<'a>, power: OutputPower, bandwidth: LoraBandwidth, spread_factor: LoraSpreadingFactor) -> Result<Self, spi::Error> {
+    async fn new(spi: Spi<'a, Async, Master>, cs: Output<'a>, busy: ExtiInput<'a>, reset: Output<'a>, dio1: ExtiInput<'a>, dio2: Input<'a>, dio3: Input<'a>, dio4: Input<'a>, power: OutputPower, bandwidth: LoraBandwidth, spread_factor: LoraSpreadingFactor, ramp_time: RampTime, coding_rate: LoraCodingRate) -> Result<Self, spi::Error> {
         let mut radio = Self {
-            spi, cs, busy, reset, dio1, dio2, dio3, dio4, power, bandwidth,
+            spi, cs, busy, reset, dio1, dio2, dio3, dio4, power, bandwidth, ramp_time, coding_rate,
         };
         let freq = 869_075_000;
         radio.reset().await;
@@ -72,14 +80,14 @@ impl<'a> Radio<'a> {
         radio.write_op(OpCode::SetDIO2AsRfSwitchCtrl, [true as u8]).await?;
         radio.set_packet_type(PacketType::Lora).await?;
         radio.set_rf_freq(freq).await?;
-        radio.set_mod_params(spread_factor, bandwidth, LoraCodingRate::CR_4_5, false).await?;
+        radio.set_mod_params(spread_factor, bandwidth, coding_rate, false).await?;
         radio.set_buffer_base_address(0, 0).await?;
         radio.set_packet_params(8, LoraHeaderType::VariableLength, 255, true, false).await?;
         radio.set_dio_irq(Irq::ALL, Irq::TX_DONE | Irq::TIMEOUT, Irq::NONE, Irq::NONE).await?;
         radio.set_rx_gain(RxGain::Boosted).await?;
         radio.set_rx_gain_retention().await?;
         radio.tx_clamp_workaround().await?;
-        radio.set_tx_params(power, RampTime::R200).await?;
+        radio.set_tx_params(power, ramp_time).await?;
         radio.write_op(OpCode::SetRxTxFallbackMode, [FallbackMode::StdbyRc as u8]).await?;
         radio.set_sync_word(LoraNetwork::Private).await?;
         Ok(radio)
@@ -91,17 +99,15 @@ impl<'a> Radio<'a> {
         self.reset.set_high();
     }
 
-    fn wait_on_busy(&mut self) {
-        while self.busy.is_high() {
-            cortex_m::asm::nop();
-        }
+    async fn wait_on_busy(&mut self) {
+        self.busy.wait_for_low().await;
     }
 
     async fn read_reg<T>(&mut self, reg: reg::Reg<T>) -> Result<T, spi::Error>
     where
         T: Sized + Default + Copy,
     {
-        self.wait_on_busy();
+        self.wait_on_busy().await;
 
         let guard = CsGuard::new(&mut self.cs);
 
@@ -113,7 +119,7 @@ impl<'a> Radio<'a> {
     }
 
     async fn write_reg<T: Sized>(&mut self, reg: reg::Reg<T>, payload: T) -> Result<(), spi::Error> {
-        self.wait_on_busy();
+        self.wait_on_busy().await;
 
         let guard = CsGuard::new(&mut self.cs);
 
@@ -130,7 +136,7 @@ impl<'a> Radio<'a> {
     where
         T: Sized + Default + Copy,
     {
-        self.wait_on_busy();
+        self.wait_on_busy().await;
 
         let guard = CsGuard::new(&mut self.cs);
 
@@ -144,7 +150,7 @@ impl<'a> Radio<'a> {
     }
 
     async fn write_op<const N: usize>(&mut self, code: OpCode, payload: [u8; N]) -> Result<(), spi::Error> {
-        self.wait_on_busy();
+        self.wait_on_busy().await;
 
         let guard = CsGuard::new(&mut self.cs);
 
@@ -156,7 +162,7 @@ impl<'a> Radio<'a> {
 
         drop(guard);
 
-        self.wait_on_busy();
+        self.wait_on_busy().await;
 
         let (om, cs) = self.get_status().await?;
         info!("op = {}, om = {}, cs = {}", code, om, cs);
@@ -352,7 +358,7 @@ impl<'a> Radio<'a> {
     pub async fn transmit(&mut self, data: &[u8], timeout: u32, wait: bool) -> Result<u8, spi::Error> {
         self.set_mode(OperatingMode::StbyRc).await?;
         self.set_buffer_base_address(0, 0).await?;
-        self.wait_on_busy();
+        self.wait_on_busy().await;
 
         {
             let guard = CsGuard::new(&mut self.cs);
@@ -367,16 +373,14 @@ impl<'a> Radio<'a> {
 
         self.write_reg(reg::PAYLOAD_LENGTH, size).await?;
 
-        self.set_tx_params(self.power, RampTime::R200).await?;
+        self.set_tx_params(self.power, self.ramp_time).await?;
 
         self.set_dio_irq(Irq::ALL, Irq::TX_DONE | Irq::TIMEOUT, Irq::NONE, Irq::NONE).await?;
 
         self.set_tx(timeout).await?;
 
         if wait {
-            while !self.dio1.is_high() {
-                cortex_m::asm::nop();
-            }
+            self.dio1.wait_for_high().await;
 
             let irq = self.get_irq_status().await?;
 
