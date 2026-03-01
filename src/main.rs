@@ -36,16 +36,47 @@ async fn main(spawner: Spawner) {
     let spi = Spi::new(p.SPI1, p.PA5, p.PA7, p.PA6, p.DMA2_CH3, p.DMA2_CH2, spi_config);
     info!("SPI setup!");
 
-    let mut radio = Radio::new(spi, cs, busy, reset, dio1, dio2, dio3, dio4, OutputPower::Db22, LoraBandwidth::BW_7, LoraSpreadingFactor::SF12, RampTime::R200, LoraCodingRate::CR_4_5).await.unwrap();
+    let config = RadioConfig {
+        power: OutputPower::Db22,
+        bandwidth: LoraBandwidth::BW_7,
+        spread_factor: LoraSpreadingFactor::SF12,
+        ramp_time: RampTime::R3400,
+        coding_rate: LoraCodingRate::CR_4_5,
+        frequency: 869_075_000,
+    };
+    let mut radio = Radio::new(spi, cs, busy, reset, dio1, dio2, dio3, dio4, config).await.unwrap();
 
     info!("Packet Length = {}", radio.read_reg(reg::PACKET_LENGTH).await.unwrap());
 
-    let size = radio.transmit(b"This is a very very long lora message!!!", 10000, true).await.unwrap();
+    let size = radio.transmit(b"This is a very very long lora message!!!", 10_000.0, true).await.unwrap();
 
     info!("Transmitted {} bytes!", size);
 
     loop {
         cortex_m::asm::nop();
+    }
+}
+
+#[derive(Copy, Clone)]
+struct RadioConfig {
+    power: OutputPower,
+    bandwidth: LoraBandwidth,
+    ramp_time: RampTime,
+    coding_rate: LoraCodingRate,
+    spread_factor: LoraSpreadingFactor,
+    frequency: u32,
+}
+
+impl Default for RadioConfig {
+    fn default() -> Self {
+        Self {
+            power: OutputPower::Db22,
+            bandwidth: LoraBandwidth::BW_500,
+            ramp_time: RampTime::R200,
+            coding_rate: LoraCodingRate::CR_4_5,
+            spread_factor: LoraSpreadingFactor::SF12,
+            frequency: 869_525_000
+        }
     }
 }
 
@@ -58,36 +89,32 @@ struct Radio<'a> {
     dio2: Input<'a>,
     dio3: Input<'a>,
     dio4: Input<'a>,
-    power: OutputPower,
-    bandwidth: LoraBandwidth,
-    ramp_time: RampTime,
-    coding_rate: LoraCodingRate,
+    config: RadioConfig,
 }
 
 impl<'a> Radio<'a> {
-    async fn new(spi: Spi<'a, Async, Master>, cs: Output<'a>, busy: ExtiInput<'a>, reset: Output<'a>, dio1: ExtiInput<'a>, dio2: Input<'a>, dio3: Input<'a>, dio4: Input<'a>, power: OutputPower, bandwidth: LoraBandwidth, spread_factor: LoraSpreadingFactor, ramp_time: RampTime, coding_rate: LoraCodingRate) -> Result<Self, spi::Error> {
+    async fn new(spi: Spi<'a, Async, Master>, cs: Output<'a>, busy: ExtiInput<'a>, reset: Output<'a>, dio1: ExtiInput<'a>, dio2: Input<'a>, dio3: Input<'a>, dio4: Input<'a>, config: RadioConfig) -> Result<Self, spi::Error> {
         let mut radio = Self {
-            spi, cs, busy, reset, dio1, dio2, dio3, dio4, power, bandwidth, ramp_time, coding_rate,
+            spi, cs, busy, reset, dio1, dio2, dio3, dio4, config,
         };
-        let freq = 869_075_000;
         radio.reset().await;
         radio.set_mode(OperatingMode::StbyRc).await?;
         radio.set_regulator_mode(true).await?;
-        radio.set_pa_config(power).await?;
+        radio.set_pa_config(config.power).await?;
         // radio.write_op(OpCode::SetDio3AsTcxoCtrl, [TXCOControl::TC_3_3V as u8, 0, 0, 0x64]).await?;
         radio.calibrate_device(CalibrationDevice::ALL).await?;
-        radio.calibrate_image(freq).await?;
+        radio.calibrate_image(config.frequency).await?;
         radio.write_op(OpCode::SetDIO2AsRfSwitchCtrl, [true as u8]).await?;
         radio.set_packet_type(PacketType::Lora).await?;
-        radio.set_rf_freq(freq).await?;
-        radio.set_mod_params(spread_factor, bandwidth, coding_rate, false).await?;
+        radio.set_rf_freq(config.frequency).await?;
+        radio.set_mod_params(config.spread_factor, config.bandwidth, config.coding_rate, false).await?;
         radio.set_buffer_base_address(0, 0).await?;
         radio.set_packet_params(8, LoraHeaderType::VariableLength, 255, true, false).await?;
         radio.set_dio_irq(Irq::ALL, Irq::TX_DONE | Irq::TIMEOUT, Irq::NONE, Irq::NONE).await?;
         radio.set_rx_gain(RxGain::Boosted).await?;
         radio.set_rx_gain_retention().await?;
         radio.tx_clamp_workaround().await?;
-        radio.set_tx_params(power, ramp_time).await?;
+        radio.set_tx_params(config.power, config.ramp_time).await?;
         radio.write_op(OpCode::SetRxTxFallbackMode, [FallbackMode::StdbyRc as u8]).await?;
         radio.set_sync_word(LoraNetwork::Private).await?;
         Ok(radio)
@@ -205,12 +232,11 @@ impl<'a> Radio<'a> {
         self.write_op(OpCode::SetTxParams, [power as u8, ramp_time as u8]).await
     }
 
-    async fn set_tx(&mut self, mut timeout: u32) -> Result<(), spi::Error> {
-        timeout <<= 6; //timeout passed in mS, convert to units of 15.625us
+    async fn set_tx(&mut self, timeout: f32) -> Result<(), spi::Error> {
         self.clear_irq(Irq::ALL).await?;
-        self.mod_quality_workaround(PacketType::Lora, self.bandwidth).await?;
-        let [_, timeout_hi, timeout_mid, timeout_lo] = timeout.to_be_bytes();
-        self.write_op(OpCode::SetTx, [timeout_hi, timeout_mid, timeout_lo]).await
+        self.mod_quality_workaround(PacketType::Lora, self.config.bandwidth).await?;
+        let to_bytes = time_bytes(timeout);
+        self.write_op(OpCode::SetTx, to_bytes).await
     }
 
     async fn set_regulator_mode(&mut self, dc_dc: bool) -> Result<(), spi::Error> {
@@ -355,7 +381,7 @@ impl<'a> Radio<'a> {
         self.write_op(OpCode::SetPacketType, [packet_type as u8]).await
     }
 
-    pub async fn transmit(&mut self, data: &[u8], timeout: u32, wait: bool) -> Result<u8, spi::Error> {
+    pub async fn transmit(&mut self, data: &[u8], timeout: f32, wait: bool) -> Result<u8, spi::Error> {
         self.set_mode(OperatingMode::StbyRc).await?;
         self.set_buffer_base_address(0, 0).await?;
         self.wait_on_busy().await;
@@ -373,7 +399,7 @@ impl<'a> Radio<'a> {
 
         self.write_reg(reg::PAYLOAD_LENGTH, size).await?;
 
-        self.set_tx_params(self.power, self.ramp_time).await?;
+        self.set_tx_params(self.config.power, self.config.ramp_time).await?;
 
         self.set_dio_irq(Irq::ALL, Irq::TX_DONE | Irq::TIMEOUT, Irq::NONE, Irq::NONE).await?;
 
