@@ -4,6 +4,7 @@
 use ccm::{AeadInPlace, KeyInit};
 use aes::cipher::{KeyIvInit, StreamCipher};
 use aes::cipher::generic_array::GenericArray;
+use arrayvec::ArrayVec;
 use x25519_nostd::{public_key, diffie_hellman};
 use byteorder::LittleEndian;
 use byteorder_cursor::Cursor;
@@ -98,7 +99,8 @@ async fn main(spawner: Spawner) {
         if size > 0 {
             let data = &mut buffer[..size];
             info!("Received bytes: {:02x}", data);
-            try_decode(data, &shared_key);
+            let mut out = ArrayVec::<u8, 256>::new();
+            try_decode(data, &shared_key, &mut out);
         }
     }
 
@@ -107,44 +109,28 @@ async fn main(spawner: Spawner) {
     }
 }
 
-fn try_decode_ctr(data: &mut [u8], header: &MestasticHeader, key: &[u8; 32]) -> bool {
+fn try_decode_ctr<'a>(data: &'a mut [u8], header: &MestasticHeader, key: &[u8; 32]) -> Option<&'a [u8]> {
     let nonce = Nonce {
         packet_id: header.packet_id,
         extra: 0,
         from: header.from,
         pad: 0,
     };
+    aes_256_ctr(data, nonce.as_ctr_bytes(), key)
+}
 
-    let nonce = nonce.as_ctr_bytes();
-    info!("nonce bytes: {:02x}", nonce);
+fn aes_256_ctr<'a>(data: &'a mut [u8], nonce: &[u8; 16], key: &[u8; 32]) -> Option<&'a [u8]> {
     let nonce = GenericArray::from_slice(nonce);
     let mut cipher = Aes256Ctr::new(&GenericArray::from_slice(key), nonce);
 
     if let Ok(()) = cipher.try_apply_keystream(data) {
-        info!("decrypted: {:02x}", data);
-        true
+        Some(data)
     } else {
-        false
+        None
     }
 }
 
-fn aes_256_ctr(data: &[u8], nonce: &[u8; 16], key: &[u8; 32]) -> bool {
-    let nonce = GenericArray::from_slice(nonce);
-    let mut cipher = Aes256Ctr::new(&GenericArray::from_slice(key), nonce);
-    let mut vec = arrayvec::ArrayVec::<u8, 256>::new();
-    unsafe {
-        vec.set_len(data.len());
-    }
-    vec.copy_from_slice(data);
-    if let Ok(()) = cipher.try_apply_keystream(&mut vec) {
-        info!("decrypted: {:02x}", vec.as_slice());
-        true
-    } else {
-        false
-    }
-}
-
-fn try_decode_ccm(data: &[u8], header: &MestasticHeader, key: &[u8; 32]) -> bool {
+fn try_decode_ccm<'a>(data: &[u8], header: &MestasticHeader, key: &[u8; 32], out: &'a mut ArrayVec<u8, 256>) -> Option<&'a [u8]> {
     let (data, extra_nonce) = data.split_last_chunk::<4>().expect("data too short");
     let extra_nonce = u32::from_le_bytes(*extra_nonce);
     let nonce = Nonce {
@@ -163,21 +149,19 @@ fn try_decode_ccm(data: &[u8], header: &MestasticHeader, key: &[u8; 32]) -> bool
 
     let cipher = Aes256CcmL2::new(&GenericArray::from_slice(key));
 
-    let mut vec = arrayvec::ArrayVec::<u8, 256>::new();
     unsafe {
-        vec.set_len(data.len());
+        out.set_len(data.len());
     }
-    vec.copy_from_slice(data);
+    out.copy_from_slice(data);
 
-    if let Ok(()) = cipher.decrypt_in_place(&nonce, &[], &mut vec) {
-        info!("decrypted: {:02x}", vec.as_slice());
-        true
+    if let Ok(()) = cipher.decrypt_in_place(&nonce, &[], out) {
+        Some(out.as_slice())
     } else {
-        false
+        None
     }
 }
 
-fn try_decode(data: &mut [u8], key: &[u8; 32]) {
+fn try_decode(data: &mut [u8], key: &[u8; 32], out: &mut ArrayVec<u8, 256>) {
     let size = data.len();
     let mut cursor = Cursor::new(&*data);
     let header = MestasticHeader {
@@ -194,10 +178,10 @@ fn try_decode(data: &mut [u8], key: &[u8; 32]) {
     info!("recv: {} ({} bytes payload)", header, data.len());
 
     // CCM used only for personal messages
-    if !header.is_broadcast() && try_decode_ccm(data, &header, key) {
-
-    } else if try_decode_ctr(data, &header, &PRIV) {
-
+    if !header.is_broadcast() && let Some(packet) = try_decode_ccm(data, &header, key, out) {
+        info!("decrypted: {:02x}", packet);
+    } else if let Some(packet) = try_decode_ctr(data, &header, &PRIV) {
+        info!("decrypted: {:02x}", packet);
     }
 }
 
