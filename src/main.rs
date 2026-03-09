@@ -23,8 +23,8 @@ async fn main(spawner: Spawner) {
     let config = Default::default();
     let p = embassy_stm32::init(config);
 
-    let cs = Output::new(p.PB0, Level::High, Speed::Medium);
-    let reset = Output::new(p.PB1, Level::High, Speed::Medium);
+    let cs = Output::new(p.PB0, Level::High, Speed::VeryHigh);
+    let reset = Output::new(p.PB1, Level::High, Speed::VeryHigh);
     let busy = ExtiInput::new(p.PB2, p.EXTI2, Pull::Down, Irqs);
     let dio1 = ExtiInput::new(p.PA4, p.EXTI4, Pull::Down, Irqs);
     let dio2 = Input::new(p.PA3, Pull::Down);
@@ -38,19 +38,29 @@ async fn main(spawner: Spawner) {
 
     let config = RadioConfig {
         power: OutputPower::Db22,
-        bandwidth: LoraBandwidth::BW_7,
-        spread_factor: LoraSpreadingFactor::SF12,
-        ramp_time: RampTime::R3400,
+        bandwidth: LoraBandwidth::BW_250,
+        spread_factor: LoraSpreadingFactor::SF11,
+        ramp_time: RampTime::R200,
         coding_rate: LoraCodingRate::CR_4_5,
+        header_type: LoraHeaderType::VariableLength,
+        sync_word: 0x24B4, // Meshtastic
+        preamble_len: 16,
         frequency: 869_075_000,
     };
     let mut radio = Radio::new(spi, cs, busy, reset, dio1, dio2, dio3, dio4, config).await.unwrap();
 
-    info!("Packet Length = {}", radio.read_reg(reg::PACKET_LENGTH).await.unwrap());
-
     let size = radio.transmit(b"This is a very very long lora message!!!", 10_000.0, true).await.unwrap();
 
     info!("Transmitted {} bytes!", size);
+
+    let mut buffer = [0; 255];
+
+    loop {
+        let size = radio.receive(&mut buffer, 60_000.0, true).await.unwrap();
+        if size > 0 {
+            info!("Got {} bytes! {:02x}", size, &buffer[..size]);
+        }
+    }
 
     loop {
         cortex_m::asm::nop();
@@ -64,7 +74,10 @@ struct RadioConfig {
     ramp_time: RampTime,
     coding_rate: LoraCodingRate,
     spread_factor: LoraSpreadingFactor,
+    header_type: LoraHeaderType,
+    preamble_len: u16,
     frequency: u32,
+    sync_word: u16
 }
 
 impl Default for RadioConfig {
@@ -75,6 +88,9 @@ impl Default for RadioConfig {
             ramp_time: RampTime::R200,
             coding_rate: LoraCodingRate::CR_4_5,
             spread_factor: LoraSpreadingFactor::SF12,
+            header_type: LoraHeaderType::VariableLength,
+            sync_word: 0x3444, //LoRa Public
+            preamble_len: 8,
             frequency: 869_525_000
         }
     }
@@ -97,33 +113,69 @@ impl<'a> Radio<'a> {
         let mut radio = Self {
             spi, cs, busy, reset, dio1, dio2, dio3, dio4, config,
         };
+        let mut buffer = [0; 16];
         radio.reset().await;
-        radio.set_mode(OperatingMode::StbyRc).await?;
-        radio.set_regulator_mode(true).await?;
-        radio.set_pa_config(config.power).await?;
-        // radio.write_op(OpCode::SetDio3AsTcxoCtrl, [TXCOControl::TC_3_3V as u8, 0, 0, 0x64]).await?;
-        radio.calibrate_device(CalibrationDevice::ALL).await?;
-        radio.calibrate_image(config.frequency).await?;
-        radio.write_op(OpCode::SetDIO2AsRfSwitchCtrl, [true as u8]).await?;
-        radio.set_packet_type(PacketType::Lora).await?;
-        radio.set_rf_freq(config.frequency).await?;
-        radio.set_mod_params(config.spread_factor, config.bandwidth, config.coding_rate, false).await?;
+        radio.wait_on_busy().await;
+        Timer::after_secs(1).await;
+        radio.set_standby(Standby::Rc).await?;
+        warn!("Module version: {}", radio.get_version_string(&mut buffer).await?);
         radio.set_buffer_base_address(0, 0).await?;
-        radio.set_packet_params(8, LoraHeaderType::VariableLength, 255, true, false).await?;
-        radio.set_dio_irq(Irq::ALL, Irq::TX_DONE | Irq::TIMEOUT, Irq::NONE, Irq::NONE).await?;
+        radio.set_packet_type(PacketType::Lora).await?;
+        radio.write_op(OpCode::SetRxTxFallbackMode, [FallbackMode::StdbyRc as u8]).await?;
+        radio.set_cad_params(CadSymbol::Symbol8, 22, 12, CadExitMode::CadOnly, 0.0).await?;
+        radio.clear_irq(Irq::ALL).await?;
+        radio.set_dio_irq(Irq::NONE, Irq::NONE, Irq::NONE, Irq::NONE).await?;
+        radio.calibrate_device(CalibrationDevice::ALL).await?;
+        radio.set_regulator_mode(true).await?;
+        let _pt = radio.get_packet_type().await?;
+        radio.set_mod_params(config.spread_factor, config.bandwidth, config.coding_rate, false).await?;
+        let _pt = radio.get_packet_type().await?;
+        radio.set_sync_word(config.sync_word).await?;
+        let _pt = radio.get_packet_type().await?;
+        let iq_pol = radio.read_reg(reg::IQ_POLARITY_SETUP).await?;
+        radio.write_reg(reg::IQ_POLARITY_SETUP, iq_pol & !(1 << 2)).await?;
+        radio.set_packet_params(config.preamble_len, config.header_type, 255, true, false).await?;
+        radio.set_ocp_config(0x38).await?;
+        radio.write_op(OpCode::SetDIO2AsRfSwitchCtrl, [true as u8]).await?;
+        let _pt = radio.get_packet_type().await?;
+        let iq_pol = radio.read_reg(reg::IQ_POLARITY_SETUP).await?;
+        radio.write_reg(reg::IQ_POLARITY_SETUP, iq_pol & !(1 << 2)).await?;
+        radio.set_packet_params(config.preamble_len, config.header_type, 255, true, false).await?;
+        let _pt = radio.get_packet_type().await?;
+        radio.set_packet_params(config.preamble_len, config.header_type, 255, true, false).await?;
+        let _pt = radio.get_packet_type().await?;
+        radio.set_mod_params(config.spread_factor, LoraBandwidth::BW_500, config.coding_rate, false).await?;
+        let _pt = radio.get_packet_type().await?;
+        radio.set_mod_params(config.spread_factor, config.bandwidth, config.coding_rate, false).await?;
+        // radio.set_tcxo_mode(TcxoCtrlVoltage::TC_1_7V, 100).await?;
+        radio.calibrate_image(config.frequency).await?;
+        radio.set_rf_freq(config.frequency).await?;
+        radio.tx_clamp_workaround().await?;
+        let ocp = radio.get_ocp_config().await?;
+        radio.set_pa_config(config.power).await?;
+        radio.set_tx_params(config.power, config.ramp_time).await?;
+        radio.set_ocp_config(ocp).await?;
+        radio.set_ocp_config(0x38).await?;
+        radio.write_op(OpCode::SetDIO2AsRfSwitchCtrl, [true as u8]).await?;
         radio.set_rx_gain(RxGain::Boosted).await?;
         radio.set_rx_gain_retention().await?;
-        radio.tx_clamp_workaround().await?;
-        radio.set_tx_params(config.power, config.ramp_time).await?;
-        radio.write_op(OpCode::SetRxTxFallbackMode, [FallbackMode::StdbyRc as u8]).await?;
-        radio.set_sync_word(LoraNetwork::Private).await?;
+        let u = radio.read_reg(reg::UNK_08_B5).await?;
+        radio.write_reg(reg::UNK_08_B5, 0x05).await?;
+        let u = radio.read_reg(reg::UNK_08_B5).await?;
+        let _pt = radio.get_packet_type().await?;
+        let iq_pol = radio.read_reg(reg::IQ_POLARITY_SETUP).await?;
+        radio.write_reg(reg::IQ_POLARITY_SETUP, iq_pol & !(1 << 2)).await?;
+        radio.set_packet_params(config.preamble_len, config.header_type, 255, true, false).await?;
+        radio.set_dio_irq(Irq::ALL, Irq::ALL, Irq::NONE, Irq::NONE).await?;
         Ok(radio)
     }
 
     async fn reset(&mut self) {
+        Timer::after_millis(10).await;
         self.reset.set_low();
-        Timer::after_millis(500).await;
+        Timer::after_millis(20).await;
         self.reset.set_high();
+        Timer::after_millis(10).await;
     }
 
     async fn wait_on_busy(&mut self) {
@@ -140,7 +192,7 @@ impl<'a> Radio<'a> {
 
         let mut op = RegOp::read(reg.addr(), T::default());
         let payload = unsafe { core::slice::from_raw_parts_mut(&raw mut op as *mut u8, size_of_val(&op)) };
-        info!("sent register {:?} read payload: {:02x}", reg, payload);
+
         self.spi.transfer_in_place(payload).await?;
         Ok(op.payload.payload)
     }
@@ -152,7 +204,6 @@ impl<'a> Radio<'a> {
 
         let op = RegOp::write(reg.addr(), payload);
         let payload = unsafe { core::slice::from_raw_parts(&raw const op as *const u8, size_of_val(&op)) };
-        info!("sent register {:?} write payload: {:02x}", reg, payload);
 
         self.spi.write(payload).await?;
 
@@ -170,8 +221,6 @@ impl<'a> Radio<'a> {
         let mut op = Op::read(code, T::default());
         let payload = unsafe { core::slice::from_raw_parts_mut(&raw mut op as *mut u8, size_of_val(&op)) };
 
-        info!("sent op {:?} read payload: {:02x}", code, payload);
-
         self.spi.transfer_in_place(payload).await?;
         Ok(op.payload.payload)
     }
@@ -183,13 +232,10 @@ impl<'a> Radio<'a> {
 
         let op = Op { code, payload };
         let payload = unsafe { core::slice::from_raw_parts(&raw const op as *const u8, size_of_val(&op)) };
-        info!("written op {:?} payload: {:02x}", code, payload);
 
         self.spi.write(payload).await?;
 
         drop(guard);
-
-        self.wait_on_busy().await;
 
         let (om, cs) = self.get_status().await?;
         info!("op = {}, om = {}, cs = {}", code, om, cs);
@@ -216,6 +262,11 @@ impl<'a> Radio<'a> {
         self.write_op(OpCode::SetPacketParams, [preamble_hi, preamble_lo, header_type as u8, payload_len, crc as u8, inv_iq as u8]).await
     }
 
+    async fn set_cad_params(&mut self, cad_symbol: CadSymbol, peak_threshold: u8, min_threshold: u8, exit_mode: CadExitMode, timeout: f32) -> Result<(), spi::Error> {
+        let to_bytes = time_bytes(timeout);
+        self.write_op(OpCode::SetCADParams, [cad_symbol as u8, peak_threshold, min_threshold, exit_mode as u8, to_bytes[0], to_bytes[1], to_bytes[2]]).await
+    }
+
     async fn set_pa_config(&mut self, power: OutputPower) -> Result<(), spi::Error> {
         let (duty_cycle, hp_max) = match power {
             OutputPower::Db14 => (0x02, 0x02),
@@ -226,6 +277,12 @@ impl<'a> Radio<'a> {
         let device = 0;
         let reserved = 1;
         self.write_op(OpCode::SetPAConfig, [duty_cycle, hp_max, device, reserved]).await
+    }
+
+    async fn set_tcxo_mode(&mut self, voltage: TcxoCtrlVoltage, timeout: u32) -> Result<(), spi::Error> {
+        let to_bytes = timeout.to_be_bytes();
+        warn!("voltage bytes: {:02x}", [to_bytes[1], to_bytes[2], to_bytes[3]]);
+        self.write_op(OpCode::SetDio3AsTcxoCtrl, [voltage as u8, to_bytes[1], to_bytes[2], to_bytes[3]]).await
     }
 
     async fn set_tx_params(&mut self, power: OutputPower, ramp_time: RampTime) -> Result<(), spi::Error> {
@@ -239,6 +296,12 @@ impl<'a> Radio<'a> {
         self.write_op(OpCode::SetTx, to_bytes).await
     }
 
+    async fn set_rx(&mut self, timeout: f32) -> Result<(), spi::Error> {
+        self.clear_irq(Irq::ALL).await?;
+        let to_bytes = time_bytes(timeout);
+        self.write_op(OpCode::SetRx, to_bytes).await
+    }
+
     async fn set_regulator_mode(&mut self, dc_dc: bool) -> Result<(), spi::Error> {
         self.write_op(OpCode::SetRegulatorMode, [dc_dc as u8]).await
     }
@@ -249,10 +312,17 @@ impl<'a> Radio<'a> {
 
     /// (6x only) See DS, section 9.6: Receive (RX) Mode).
     async fn set_rx_gain_retention(&mut self) -> Result<(), spi::Error> {
-        self.write_reg(reg::RX_GAIN_RETENTION0, 0x01).await?;
-        self.write_reg(reg::RX_GAIN_RETENTION1, 0x08).await?;
-        self.write_reg(reg::RX_GAIN_RETENTION2, 0xac).await?;
-        Ok(())
+        self.write_reg(reg::RX_GAIN_RETENTION, [0x01, 0x08, 0xac]).await
+    }
+
+    //TODO
+    async fn get_ocp_config(&mut self) -> Result<u8, spi::Error> {
+        self.read_reg(reg::OCP_CONFIG).await
+    }
+
+    //TODO
+    async fn set_ocp_config(&mut self, ocp: u8) -> Result<(), spi::Error> {
+        self.write_reg(reg::OCP_CONFIG, ocp).await
     }
 
     /// (6x only) See DS, section 15.2.2.
@@ -261,7 +331,6 @@ impl<'a> Radio<'a> {
         self.write_reg(reg::TX_CLAMP_CONFIG, cc | 0x1e).await?;
         Ok(())
     }
-
 
     /// DS, section 16.1.2. Adapted from pseudocode there.
     /// (6x only)
@@ -287,10 +356,9 @@ impl<'a> Radio<'a> {
         self.write_reg(reg::EVENT_MASK, val | 0x02).await
     }
 
-    async fn set_sync_word(&mut self, network: LoraNetwork) -> Result<(), spi::Error> {
-        let [sync_word_hi, sync_word_lo] = (network as u16).to_be_bytes();
-        self.write_reg(reg::LORA_SYNC_WORD_MSB, sync_word_hi).await?;
-        self.write_reg(reg::LORA_SYNC_WORD_LSB, sync_word_lo).await?;
+    async fn set_sync_word(&mut self, word: u16) -> Result<(), spi::Error> {
+        let [word_hi, word_lo] = word.to_be_bytes();
+        self.write_reg(reg::LORA_SYNC_WORD, [word_hi, word_lo]).await?;
         Ok(())
     }
 
@@ -299,20 +367,30 @@ impl<'a> Radio<'a> {
         self.write_op(OpCode::ClearIrqStatus, [irq_hi, irq_lo]).await
     }
 
+    async fn wait_for_irq(&mut self) -> Result<Irq, spi::Error> {
+        self.dio1.wait_for_high().await;
+        self.get_irq_status().await
+    }
+
     async fn get_irq_status(&mut self) -> Result<Irq, spi::Error> {
         let bits = self.read_op(OpCode::GetIrqStatus).await?;
-        Ok(Irq::from_bits(bits).unwrap())
+        Ok(Irq::from_bits(u16::from_be(bits)).unwrap())
     }
 
-    async fn check_status(&mut self) -> Result<(), spi::Error> {
-        let (om, cs) = self.get_status().await?;
-        info!("        om = {}, cs = {}", om, cs);
-        Ok(())
-    }
-
-    async fn get_status(&mut self) -> Result<(u8, CommandStatus), spi::Error> {
+    async fn get_status(&mut self) -> Result<(OperatingMode, CommandStatus), spi::Error> {
         let status = self.read_op::<u8>(OpCode::GetStatus).await?;
         let (om, cs) = ((status >> 4) & 0b111, (status >> 1) & 0b111);
+        let om = match om {
+            0 => OperatingMode::StbyRc,
+            1 => OperatingMode::StbyOsc,
+            2 => OperatingMode::Fs,
+            3 => OperatingMode::Tx,
+            4 => OperatingMode::Rx,
+            5 => OperatingMode::RxDc,
+            6 => OperatingMode::Cad,
+            7 => OperatingMode::Sleep,
+            other => defmt::panic!("Unknown operating mode received: {}", other),
+        };
         let cs = match cs {
             1 => CommandStatus::CommandProcessSuccess,
             2 => CommandStatus::DataAvailable,
@@ -333,30 +411,18 @@ impl<'a> Radio<'a> {
         self.write_op(OpCode::SetDioIrqParams, [irq_hi, irq_lo, dio1_hi, dio1_lo, dio2_hi, dio2_lo, dio3_hi, dio3_lo]).await
     }
 
-    /// Sets the device into sleep mode; the lowest current consumption possible. Wake up by setting CS low.
-    async fn set_mode(&mut self, mode: OperatingMode) -> Result<(), spi::Error> {
-        match mode {
-            OperatingMode::Sleep(cfg) => {
-                // todo: Wake-up on RTC A/R.
-                self.write_op(OpCode::SetSleep, [(cfg as u8) << 2]).await
-            }
-            OperatingMode::StbyRc => self.write_op(OpCode::SetStandby, [0]).await,
-            OperatingMode::StbyOsc => self.write_op(OpCode::SetStandby, [1]).await,
-            OperatingMode::Fs => self.write_op(OpCode::SetFS, []).await,
-            OperatingMode::Tx(timeout) => {
-                let to_bytes = time_bytes(timeout);
-                self.write_op(OpCode::SetTx, to_bytes).await
-            }
-            OperatingMode::Rx(timeout) => {
-                let to_bytes = time_bytes(timeout);
-                self.write_op(OpCode::SetRx, to_bytes).await
-            }
-        }
+    async fn set_standby(&mut self, standby: Standby) -> Result<(), spi::Error> {
+        self.write_op(OpCode::SetStandby, [standby as u8]).await
+    }
+
+    async fn set_sleep(&mut self, cfg: SleepConfig) -> Result<(), spi::Error> {
+        self.write_op(OpCode::SetSleep, [(cfg as u8) << 2]).await
     }
 
     async fn calibrate_device(&mut self, device: CalibrationDevice) -> Result<(), spi::Error> {
         self.write_op(OpCode::Calibrate, [device.bits]).await?;
         Timer::after_millis(5).await; //calibration time for all devices is 3.5mS, SX126x
+        self.wait_on_busy().await;
         Ok(())
     }
 
@@ -364,7 +430,7 @@ impl<'a> Radio<'a> {
         let payload = if freq > 900000000 {
             [0xE1, 0xE9]
         } else if freq > 850000000 {
-            [0xD7, 0xD8]
+            [0xD7, 0xDB]
         } else if freq > 770000000 {
             [0xC1, 0xC5]
         } else if freq > 460000000 {
@@ -381,8 +447,23 @@ impl<'a> Radio<'a> {
         self.write_op(OpCode::SetPacketType, [packet_type as u8]).await
     }
 
+    async fn get_packet_type(&mut self) -> Result<PacketType, spi::Error> {
+        Ok(match self.read_op(OpCode::GetPacketType).await? {
+            0 => PacketType::Gfsk,
+            1 => PacketType::Lora,
+            _ => PacketType::None,
+        })
+    }
+
+    async fn get_version_string<'b>(&mut self, buffer: &'b mut [u8; 16]) -> Result<&'b str, spi::Error> {
+        let s = self.read_reg(reg::VERSION_STRING).await?;
+        let len = s.iter().position(|c| *c == 0).unwrap_or(16);
+        *buffer = s;
+        Ok(unsafe { core::str::from_utf8_unchecked(&buffer[..len]) } )
+    }
+
     pub async fn transmit(&mut self, data: &[u8], timeout: f32, wait: bool) -> Result<u8, spi::Error> {
-        self.set_mode(OperatingMode::StbyRc).await?;
+        self.set_standby(Standby::Rc).await?;
         self.set_buffer_base_address(0, 0).await?;
         self.wait_on_busy().await;
 
@@ -406,9 +487,7 @@ impl<'a> Radio<'a> {
         self.set_tx(timeout).await?;
 
         if wait {
-            self.dio1.wait_for_high().await;
-
-            let irq = self.get_irq_status().await?;
+            let irq = self.wait_for_irq().await?;
 
             if irq.contains(Irq::TIMEOUT) {
                 return Ok(0);
@@ -416,6 +495,76 @@ impl<'a> Radio<'a> {
         }
 
         Ok(size)
+    }
+
+    pub async fn receive(&mut self, buffer: &mut [u8; 255], timeout: f32, wait: bool) -> Result<usize, spi::Error> {
+        self.set_dio_irq(Irq::ALL, Irq::RX_DONE, Irq::NONE, Irq::NONE).await?;
+        self.set_rx(timeout).await?;
+
+        if wait {
+            let irq = self.wait_for_irq().await?;
+            self.clear_irq(irq).await?;
+
+            /*if irq.contains(Irq::PREAMBLE_DETECTED) {
+                info!("{}", irq);
+                return Ok(0);
+            }*/
+
+            if irq.contains(Irq::HEADER_ERROR) {
+                info!("{}", irq);
+                self.set_standby(Standby::Rc).await?;
+                return Ok(0);
+            }
+
+            let (om, cs) = self.get_status().await?;
+
+            if cs == CommandStatus::CommandTimeout {
+                return Ok(0);
+            }
+
+            info!("RX om = {}, cs = {}", om, cs);
+
+            if cs == CommandStatus::DataAvailable {
+                if irq.contains(Irq::HEADER_ERROR) || irq.contains(Irq::CRC_ERROR) {
+                    warn!("HEADER/CRC error!");
+                    return Ok(0);
+                }
+            }
+
+            let (size, offset) = self.read_op::<(u8, u8)>(OpCode::GetRxBufferStatus).await?;
+            let size = if self.config.header_type == LoraHeaderType::FixedLength {
+                self.read_reg(reg::PAYLOAD_LENGTH).await? as usize
+            } else {
+                size as usize
+            };
+            info!("size = {}, offset = {}", size, offset);
+
+            self.set_standby(Standby::Rc).await?;
+            self.implicit_header_to_workaround().await?;
+
+            let device_errors = self.read_op::<u16>(OpCode::GetDeviceErrors).await?;
+            if device_errors != 0 {
+                warn!("device error: {}", device_errors);
+            }
+
+            info!("IRQ: {}", irq);
+
+            if cs == CommandStatus::DataAvailable {
+                let (rssi, snr, sig_rssi) = self.read_op::<(u8, u8, u8)>(OpCode::GetPacketStatus).await?;
+                let rssi = (-(rssi as i8)) >> 1;
+                let snr = (snr as i8 + 2) >> 2;
+                let sig_rssi = (-(sig_rssi as i8)) >> 1;
+
+                let guard = CsGuard::new(&mut self.cs);
+
+                info!("rssi = {}, snr = {}, sig_rssi = {}", rssi, snr, sig_rssi);
+                self.spi.transfer_in_place(&mut [OpCode::ReadBuffer as u8, 0]).await?;
+                self.spi.read(buffer).await?;
+                return Ok(size);
+            }
+        }
+
+        Ok(0)
     }
 }
 
@@ -440,13 +589,15 @@ mod reg {
     use core::marker::PhantomData;
     use defmt::Formatter;
 
+    pub const VERSION_STRING: Reg<[u8; 16]> = Reg::new(0x0320, "Version String");
     pub const HOPPING_ENABLED: Reg<u8> = Reg::new(0x0385, "Hopping Enabled");
     pub const PACKET_LENGTH: Reg<u8> = Reg::new(0x0386, "Packet Length");
     pub const NB_HOPPING_BLOCKS: Reg<u8> = Reg::new(0x0387, "NB Hopping Blocks");
     pub const PAYLOAD_LENGTH: Reg<u8> = Reg::new(0x0702, "Payload Length");
     /// These sync words must be set to the constants defined at the top of this module.
-    pub const LORA_SYNC_WORD_MSB: Reg<u8> = Reg::new(0x0740, "LoRa Sync Word MSB");
-    pub const LORA_SYNC_WORD_LSB: Reg<u8> = Reg::new(0x0741, "LoRa Sync Word LSB");
+    pub const LORA_SYNC_WORD: Reg<[u8; 2]> = Reg::new(0x0740, "LoRa Sync Word");
+    pub const IQ_POLARITY_SETUP: Reg<u8> = Reg::new(0x0736, "IQ Polarity Setup");
+    pub const UNK_08_B5: Reg<u8> = Reg::new(0x08B5, "0x08B5");
     pub const RNG0: Reg<u8> = Reg::new(0x819, "RNG 0");
     pub const RNG1: Reg<u8> = Reg::new(0x81a, "RNG 1");
     pub const RNG2: Reg<u8> = Reg::new(0x81b, "RNG 2");
@@ -458,7 +609,7 @@ mod reg {
     pub const RF_FREQ_15_8: Reg<u8> = Reg::new(0x088D, "RF Freq 15-8");
     pub const RF_FREQ_7_0: Reg<u8> = Reg::new(0x088E, "RF Freq 7-0");
     pub const TX_CLAMP_CONFIG: Reg<u8> = Reg::new(0x08d8, "TX Clamp Config");
-    pub const OCP_CONFIG: Reg<u8> = Reg::new(0x08e7, "OCP Config");
+    pub const OCP_CONFIG: Reg<u8> = Reg::new(0x08e7, "OverCurrentProtection Config");
     pub const RTC_CONTROL: Reg<u8> = Reg::new(0x0902, "RTC Control");
     pub const XTA_TRIM: Reg<u8> = Reg::new(0x0911, "XT A Trim");
     pub const XTB_TRIM: Reg<u8> = Reg::new(0x0912, "XT B Trim");
@@ -466,9 +617,7 @@ mod reg {
     pub const EVENT_MASK: Reg<u8> = Reg::new(0x0944, "Event Mask");
     /// These three registers aren't listed in Table 12.1, but apparently
     /// exist from the DS-included RxGain retention workaround.
-    pub const RX_GAIN_RETENTION0: Reg<u8> = Reg::new(0x029f, "RX Gain Retention 0");
-    pub const RX_GAIN_RETENTION1: Reg<u8> = Reg::new(0x02a0, "RX Gain Retention 1");
-    pub const RX_GAIN_RETENTION2: Reg<u8> = Reg::new(0x02a1, "RX Gain Retention 2");
+    pub const RX_GAIN_RETENTION: Reg<[u8; 3]> = Reg::new(0x029f, "RX Gain Retention");
 
     #[derive(Copy, Clone, PartialEq, Eq)]
     pub struct Reg<T>(u16, &'static str, PhantomData<T>);
@@ -476,6 +625,10 @@ mod reg {
     impl<T> Reg<T> {
         const fn new(addr: u16, name: &'static str) -> Self {
             Self(addr, name, PhantomData)
+        }
+
+        pub const fn add(&self, offset: usize) -> Reg<T> {
+            Reg::new(self.0 + offset as u16, self.1)
         }
 
         pub fn addr(&self) -> u16 {
@@ -563,25 +716,28 @@ pub enum SleepConfig {
 }
 
 /// 6x DS, section 9. (And table 13-76) 8x: Table 11-5. (Called Circuit mode)
+#[repr(u8)]
 #[derive(Clone, Copy, Format)]
 #[allow(dead_code)]
 pub enum OperatingMode {
     /// In this mode, most of the radio internal blocks are powered down or in low power mode and optionally the RC64k clock
     /// and the timer are running.
-    Sleep(SleepConfig),
+    Sleep = 7,
     /// In standby mode the host should configure the chip before going to RX or TX modes. By default in this state, the system is
     /// clocked by the 13 MHz RC oscillator to reduce power consumption (in all other modes except SLEEP the XTAL is turned ON).
     /// However, if the application is time-critical, the XOSC block can be turned or left ON.
-    StbyRc,
-    StbyOsc,
+    StbyRc = 0,
+    StbyOsc = 1,
     /// In FS mode, PLL and related regulators are switched ON. The BUSY goes low as soon as the PLL is locked or timed out.
     /// The command SetFs() is used to set the device in the frequency synthesis mode where the PLL is locked to the carrier
     /// frequency. This mode is used for test purposes of the PLL and can be considered as an intermediate mode. It is
     /// automatically reached when going from STDBY_RC mode to TX mode or RX mode.
-    Fs,
+    Fs = 2,
     /// The inner value is the timeout, in ms.
-    Tx(f32),
-    Rx(f32),
+    Tx = 3,
+    Rx = 4,
+    RxDc = 5,
+    Cad = 6,
 }
 
 #[derive(Clone, Copy, PartialEq, defmt::Format)]
@@ -653,15 +809,6 @@ pub enum PacketType {
     None = 15
 }
 
-#[repr(u16)]
-#[derive(Clone, Copy, Format)]
-#[allow(dead_code)]
-/// (SX126x only(?) DS, table 12-1. Differentiate the LoRa signal for Public or Private network.
-/// set the `LoRa Sync word MSB and LSB values to this.
-pub enum LoraNetwork {
-    Public = 0x3444,  // corresponds to sx127x 0x34
-    Private = 0x1424, // corresponds to sx127x 0x12
-}
 
 /// DS, Table 13-41. Power ramp time. Titles correspond to ramp time in µs.
 /// todo: Figure out guidelines for setting this. The DS doesn't have much on it.
@@ -681,18 +828,18 @@ pub enum RampTime {
 
 bitflags! {
     pub struct Irq: u16 {
-        const NONE = 0;
-        const TX_DONE = 0x1;
-        const RX_DONE = 0x2;
-        const PREAMBLE_DETECTED = 0x4;
-        const SYNCWORD_VALID = 0x8;
-        const HEADER_VALID = 0x10;
-        const HEADER_ERROR = 0x20;
-        const CRC_ERROR = 0x40;
-        const CAD_DONE = 0x80;
-        const CAD_ACTIVITY_DETECTED = 0x100;
-        const TIMEOUT = 0x200;
-        const ALL = 0xFFFF;
+        const NONE                  = 0b0000000000;
+        const TX_DONE               = 0b0000000001;
+        const RX_DONE               = 0b0000000010;
+        const PREAMBLE_DETECTED     = 0b0000000100;
+        const SYNCWORD_VALID        = 0b0000001000;
+        const HEADER_VALID          = 0b0000010000;
+        const HEADER_ERROR          = 0b0000100000;
+        const CRC_ERROR             = 0b0001000000;
+        const CAD_DONE              = 0b0010000000;
+        const CAD_ACTIVITY_DETECTED = 0b0100000000;
+        const TIMEOUT               = 0b1000000000;
+        const ALL                   = 0xFFFF;
     }
 }
 
@@ -878,7 +1025,7 @@ pub enum LoraLdrOptimization {
 /// that contains information about the number of bytes, coding rate and whether a CRC is used in the packet."
 
 #[repr(u8)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum LoraHeaderType {
     /// Explict header
     VariableLength = 0x00,
@@ -948,7 +1095,7 @@ pub enum CommandStatus {
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Format, Debug)]
 #[allow(non_camel_case_types, dead_code)]
-pub enum TXCOControl {
+pub enum TcxoCtrlVoltage {
     TC_1_6V = 0x00,
     TC_1_7V = 0x01,
     TC_1_8V = 0x02,
@@ -978,4 +1125,32 @@ bitflags! {
 pub enum RxGain {
     PowerSave = 0x94,
     Boosted   = 0x96,
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Format, Debug)]
+#[allow(non_camel_case_types, dead_code)]
+pub enum Standby {
+    Rc  = 0,
+    Osc = 1,
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Format, Debug)]
+#[allow(non_camel_case_types, dead_code)]
+pub enum CadSymbol {
+    Symbol1   = 0,
+    Symbol2   = 1,
+    Symbol4   = 2,
+    Symbol8   = 3,
+    Symbol16  = 4,
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Format, Debug)]
+#[allow(non_camel_case_types, dead_code)]
+pub enum CadExitMode {
+    CadOnly  = 0x0, // Go to StandbyRc
+    CadRx    = 0x1, // Go to Rx if activity detected
+    CadLbt   = 0x10,// Listen Before Talk (Tx if no activity).
 }
