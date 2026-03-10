@@ -1,5 +1,9 @@
 use bitfield::bitfield;
+use byteorder_cursor::Cursor;
 use defmt::{Format, Formatter};
+use num_derive::FromPrimitive;
+use num_traits::FromPrimitive;
+use crate::proto::{ProtoRead, ProtoWrite, Wire};
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct NodeId(pub u32);
@@ -54,8 +58,111 @@ impl Nonce {
     pub fn as_ccm_bytes(&self) -> &[u8; 13] {
         unsafe { core::mem::transmute(self) }
     }
-    
+
     pub fn as_ctr_bytes(&self) -> &[u8; 16] {
         unsafe { core::mem::transmute(self) }
+    }
+}
+
+#[repr(u32)]
+#[derive(FromPrimitive, Format, Default, Clone, Copy, PartialEq, Eq)]
+pub enum PortNum {
+    #[default]
+    UnknownApp = 0,
+    TextMessageApp = 1,
+    RemoteHardwareApp = 2,
+    PositionApp = 3,
+    NodeInfoApp = 4,
+    RoutingApp = 5,
+    AdminApp = 6,
+    TextMessageCompressedApp = 7,
+    WaypointApp = 8,
+    AudioApp = 9,
+    DetectionSensorApp = 10,
+    AlertApp = 11,
+    KeyVerificationApp = 12,
+    ReplyApp = 32,
+    IpTunnelApp = 33,
+    PaxCounterApp = 34,
+    StoreForwardPlusPlusApp = 35,
+    NodeStatusApp = 36,
+    SerialApp = 64,
+    StoreForwardApp = 65,
+    RangeTestApp = 66,
+    TelemetryApp = 67,
+    ZpsApp = 68,
+    SimulatorApp = 69,
+    TracerouteApp = 70,
+    NeighborInfoApp = 71,
+    AtakPlugin = 72,
+    MapReportApp = 73,
+    PowerStressApp = 74,
+    ReticulumTunnelApp = 76,
+    CayenneApp = 77,
+    PrivateApp = 256,
+    AtakForwarder = 257,
+    Max = 511,
+}
+
+#[derive(Default, Format)]
+pub struct Data<'a> {
+    pub port_num: PortNum,
+    pub payload: Option<&'a [u8]>,
+    pub want_response: Option<bool>,
+    pub dest: Option<NodeId>,
+    pub source: Option<NodeId>,
+    pub request_id: Option<u32>,
+    pub reply_id: Option<u32>,
+    pub emoji: Option<u32>,
+    pub bitfield: Option<u32>,
+}
+
+impl<'a> Data<'a> {
+    pub fn read(cursor: &mut Cursor<&'a [u8]>) -> Self {
+        let mut this = Self::default();
+        while cursor.remaining() > 0 {
+            let (id, wire) = cursor.read_wire();
+            match id {
+                1 => this.port_num = PortNum::from_i32(wire.expect_var_int()).expect("unknown port number"),
+                2 => this.payload = Some(wire.expect_len()),
+                3 => this.want_response = Some(wire.expect_var_int() != 0),
+                4 => this.dest = Some(NodeId(wire.expect_fixed32())),
+                5 => this.source = Some(NodeId(wire.expect_fixed32())),
+                6 => this.request_id = Some(wire.expect_fixed32()),
+                7 => this.reply_id = Some(wire.expect_fixed32()),
+                8 => this.emoji = Some(wire.expect_fixed32()),
+                9 => this.bitfield = Some(wire.expect_var_int() as u32),
+                _ => defmt::panic!("unknown proto field #{}: {}", id, wire),
+            }
+        }
+        this
+    }
+
+    pub fn write(&self, cursor: &mut Cursor<&'a mut [u8]>) {
+        cursor.write_wire(1, Wire::VarInt(self.port_num as i32));
+        if let Some(payload) = self.payload {
+            cursor.write_wire(2, Wire::Len(payload));
+        }
+        if let Some(want_response) = self.want_response {
+            cursor.write_wire(3, Wire::VarInt(want_response as i32));
+        }
+        if let Some(dest) = self.dest {
+            cursor.write_wire(4, Wire::Fixed32(dest.0));
+        }
+        if let Some(source) = self.source {
+            cursor.write_wire(5, Wire::Fixed32(source.0));
+        }
+        if let Some(request_id) = self.request_id {
+            cursor.write_wire(6, Wire::Fixed32(request_id));
+        }
+        if let Some(reply_id) = self.reply_id {
+            cursor.write_wire(7, Wire::Fixed32(reply_id));
+        }
+        if let Some(emoji) = self.emoji {
+            cursor.write_wire(8, Wire::Fixed32(emoji));
+        }
+        if let Some(bitfield) = self.bitfield {
+            cursor.write_wire(9, Wire::VarInt(bitfield as i32));
+        }
     }
 }
