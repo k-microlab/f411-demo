@@ -23,6 +23,8 @@ use crate::radio::{LoraBandwidth, LoraCodingRate, LoraHeaderType, LoraSpreadingF
 
 type Aes128Ctr = ctr::Ctr32LE<aes::Aes128>;
 type Aes256Ctr = ctr::Ctr32LE<aes::Aes256>;
+type Aes128Ctr = ctr::Ctr32BE<aes::Aes128>;
+type Aes256Ctr = ctr::Ctr32BE<aes::Aes256>;
 type Aes256CcmL2 = ccm::Ccm<aes::Aes256, U8, U13>;
 
 const PRIV: [u8; 32] = [0x00; 32];
