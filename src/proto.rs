@@ -11,7 +11,7 @@ pub enum WireType {
     VarInt = 0,
     Fixed64 = 1,
     Len = 2,
-    Fixed32 = 3,
+    Fixed32 = 5,
 }
 
 #[derive(Format)]
