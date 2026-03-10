@@ -1,4 +1,5 @@
 use bitfield::bitfield;
+use byteorder::LittleEndian;
 use byteorder_cursor::Cursor;
 use defmt::{Format, Formatter};
 use num_derive::FromPrimitive;
@@ -26,6 +27,28 @@ pub struct MestasticHeader {
 }
 
 impl MestasticHeader {
+    pub fn read(cursor: &mut Cursor<&[u8]>) -> Self {
+        Self {
+            to: NodeId(cursor.read_u32::<LittleEndian>()),
+            from: NodeId(cursor.read_u32::<LittleEndian>()),
+            packet_id: cursor.read_u32::<LittleEndian>(),
+            flags: PacketFlags(cursor.read_u8()),
+            channel: cursor.read_u8(),
+            next_hop: cursor.read_u8(),
+            relay_node: cursor.read_u8(),
+        }
+    }
+
+    pub fn write(&self, cursor: &mut Cursor<&mut [u8]>) {
+        cursor.write_u32::<LittleEndian>(self.to.0);
+        cursor.write_u32::<LittleEndian>(self.from.0);
+        cursor.write_u32::<LittleEndian>(self.packet_id);
+        cursor.write_u8(self.flags.0);
+        cursor.write_u8(self.channel);
+        cursor.write_u8(self.next_hop);
+        cursor.write_u8(self.relay_node);
+    }
+
     pub fn is_broadcast(&self) -> bool {
         self.to == NodeId(u32::MAX)
     }
@@ -34,10 +57,21 @@ impl MestasticHeader {
 bitfield! {
     pub struct PacketFlags(u8);
     u8;
-    pub get_hop_limit, _: 3, 0;
-    pub get_want_ack, _: 4, 3;
-    pub get_via_mqtt, _: 5, 4;
-    pub get_hop_start, _: 8, 5;
+    pub get_hop_limit, set_hop_limit: 3, 0;
+    pub get_want_ack, set_want_ack: 4, 3;
+    pub get_via_mqtt, set_via_mqtt: 5, 4;
+    pub get_hop_start, set_hop_start: 8, 5;
+}
+
+impl PacketFlags {
+    pub fn new(hop_limit: u8, want_ack: bool, via_mqtt: bool, hop_start: u8) -> Self {
+        let mut this = Self(0);
+        this.set_hop_limit(hop_limit);
+        this.set_want_ack(want_ack as u8);
+        this.set_via_mqtt(via_mqtt as u8);
+        this.set_hop_start(hop_start);
+        this
+    }
 }
 
 impl Format for PacketFlags {

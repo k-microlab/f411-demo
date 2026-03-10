@@ -21,10 +21,9 @@ use {defmt_rtt as _, panic_probe as _};
 use crate::meshtastic::{Data, MestasticHeader, NodeId, Nonce, PacketFlags, PortNum};
 use crate::radio::{LoraBandwidth, LoraCodingRate, LoraHeaderType, LoraSpreadingFactor, OutputPower, Radio, RadioConfig, RampTime};
 
-type Aes128Ctr = ctr::Ctr32LE<aes::Aes128>;
-type Aes256Ctr = ctr::Ctr32LE<aes::Aes256>;
 type Aes128Ctr = ctr::Ctr32BE<aes::Aes128>;
 type Aes256Ctr = ctr::Ctr32BE<aes::Aes256>;
+type Aes128CcmL2 = ccm::Ccm<aes::Aes128, U8, U13>;
 type Aes256CcmL2 = ccm::Ccm<aes::Aes256, U8, U13>;
 
 const PRIV: [u8; 32] = [0x00; 32];
@@ -97,6 +96,32 @@ async fn main(spawner: Spawner) {
 
     let shared_key = hash_256(&diffie_hellman(&PRIV, &PUB));
 
+    let data = Data {
+        port_num: PortNum::TextMessageApp,
+        payload: None,
+        want_response: None,
+        dest: None,
+        source: None,
+        request_id: None,
+        reply_id: None,
+        emoji: None,
+        bitfield: None,
+    };
+    let header = MestasticHeader {
+        to: NodeId(u32::MAX), // Broadcast
+        from: NodeId(0x01020304),
+        packet_id: 1,
+        flags: PacketFlags::new(7, true, false, 0),
+        channel: 8,
+        next_hop: 0,
+        relay_node: 253,
+    };
+    let mut out = ArrayVec::<u8, 256>::new();
+    if let Some(payload) = try_encode(&mut buffer, &data, &header, Key::Key256(&shared_key), &mut out) {
+        radio.transmit(payload, 60_000.0, true).await.expect("transmit failed");
+    }
+
+
     loop {
         buffer.fill(0);
         let size = radio.receive(&mut buffer, None, true).await.unwrap();
@@ -104,10 +129,7 @@ async fn main(spawner: Spawner) {
             let data = &mut buffer[..size];
             info!("Received bytes: {:02x}", data);
             let mut out = ArrayVec::<u8, 256>::new();
-            if let Some(packet) = try_decode(data, &shared_key, &mut out) {
-                info!("decrypted: {:02x}", packet);
-                let mut cursor = Cursor::new(packet);
-                let data = Data::read(&mut cursor);
+            if let Some((header, data)) = try_decode(data, Key::Key256(&shared_key), &mut out) {
                 info!("data: {}", data);
 
                 if data.port_num == PortNum::TextMessageApp && let Some(payload) = data.payload {
@@ -123,18 +145,18 @@ async fn main(spawner: Spawner) {
     }
 }
 
-fn try_decode_ctr<'a>(data: &'a mut [u8], header: &MestasticHeader, key: Key) -> Option<&'a [u8]> {
+fn try_decode_ctr<'buffer, 'key>(data: &'buffer mut [u8], header: &MestasticHeader, key: Key<'key>) -> Option<&'buffer [u8]> {
     let nonce = Nonce {
         packet_id: header.packet_id,
         extra: 0,
         from: header.from,
         pad: 0,
     };
-    aes_256_ctr(data, nonce.as_ctr_bytes(), key)
+    aes_256_ctr(data, &nonce, key)
 }
 
-fn aes_256_ctr<'a>(data: &'a mut [u8], nonce: &[u8; 16], key: Key) -> Option<&'a [u8]> {
-    let nonce = GenericArray::from_slice(nonce);
+fn aes_256_ctr<'buffer, 'key>(data: &'buffer mut [u8], nonce: &Nonce, key: Key<'key>) -> Option<&'buffer [u8]> {
+    let nonce = GenericArray::from_slice(nonce.as_ctr_bytes());
     match key {
         Key::Key128(key) => {
             let mut cipher = Aes128Ctr::new(&GenericArray::from_slice(key), nonce);
@@ -157,7 +179,67 @@ fn aes_256_ctr<'a>(data: &'a mut [u8], nonce: &[u8; 16], key: Key) -> Option<&'a
     }
 }
 
-fn try_decode_ccm<'a>(data: &[u8], header: &MestasticHeader, key: &[u8; 32], out: &'a mut ArrayVec<u8, 256>) -> Option<&'a [u8]> {
+fn aes_256_ccm_decrypt<'buffer, 'key>(data: &'buffer [u8], nonce: &Nonce, key: Key<'key>, out: &'buffer mut ArrayVec<u8, 256>) -> Option<&'buffer [u8]> {
+    let nonce = GenericArray::from_slice(nonce.as_ccm_bytes());
+
+    unsafe {
+        out.set_len(data.len());
+    }
+    out.copy_from_slice(data);
+
+    match key {
+        Key::Key128(key) => {
+            let cipher = Aes128CcmL2::new(&GenericArray::from_slice(key));
+
+            if let Ok(()) = cipher.decrypt_in_place(&nonce, &[], out) {
+                Some(out.as_slice())
+            } else {
+                None
+            }
+        }
+        Key::Key256(key) => {
+            let cipher = Aes256CcmL2::new(&GenericArray::from_slice(key));
+
+            if let Ok(()) = cipher.decrypt_in_place(&nonce, &[], out) {
+                Some(out.as_slice())
+            } else {
+                None
+            }
+        }
+    }
+}
+
+fn aes_256_ccm_encrypt<'buffer, 'key>(data: &'buffer [u8], nonce: &Nonce, key: Key<'key>, out: &'buffer mut ArrayVec<u8, 256>) -> Option<&'buffer [u8]> {
+    let nonce = GenericArray::from_slice(nonce.as_ccm_bytes());
+
+    unsafe {
+        out.set_len(data.len());
+    }
+    out.copy_from_slice(data);
+
+    match key {
+        Key::Key128(key) => {
+            let cipher = Aes128CcmL2::new(&GenericArray::from_slice(key));
+
+            if let Ok(()) = cipher.encrypt_in_place(&nonce, &[], out) {
+                Some(out.as_slice())
+            } else {
+                None
+            }
+        }
+        Key::Key256(key) => {
+            let cipher = Aes256CcmL2::new(&GenericArray::from_slice(key));
+
+            if let Ok(()) = cipher.encrypt_in_place(&nonce, &[], out) {
+                Some(out.as_slice())
+            } else {
+                None
+            }
+        }
+    }
+}
+
+fn try_decode_ccm<'buffer, 'key>(data: &'buffer [u8], header: &MestasticHeader, key: Key<'key>, out: &'buffer mut ArrayVec<u8, 256>) -> Option<&'buffer [u8]> {
     let (data, extra_nonce) = data.split_last_chunk::<4>().expect("data too short");
     let extra_nonce = u32::from_le_bytes(*extra_nonce);
     let nonce = Nonce {
@@ -166,44 +248,67 @@ fn try_decode_ccm<'a>(data: &[u8], header: &MestasticHeader, key: &[u8; 32], out
         from: header.from,
         pad: 0,
     };
-    let nonce = nonce.as_ccm_bytes();
-    let nonce = GenericArray::from_slice(nonce);
-
-    let cipher = Aes256CcmL2::new(&GenericArray::from_slice(key));
-
-    unsafe {
-        out.set_len(data.len());
-    }
-    out.copy_from_slice(data);
-
-    if let Ok(()) = cipher.decrypt_in_place(&nonce, &[], out) {
-        Some(out.as_slice())
-    } else {
-        None
-    }
+    aes_256_ccm_decrypt(data, &nonce, key, out)
 }
 
-fn try_decode<'a>(data: &'a mut [u8], key: &[u8; 32], out: &'a mut ArrayVec<u8, 256>) -> Option<&'a [u8]> {
-    let size = data.len();
+fn try_decode<'buffer, 'key>(data: &'buffer mut [u8], key: Key<'key>, out: &'buffer mut ArrayVec<u8, 256>) -> Option<(MestasticHeader, Data<'buffer>)> {
     let mut cursor = Cursor::new(&*data);
-    let header = MestasticHeader {
-        to: NodeId(cursor.read_u32::<LittleEndian>()),
-        from: NodeId(cursor.read_u32::<LittleEndian>()),
-        packet_id: cursor.read_u32::<LittleEndian>(),
-        flags: PacketFlags(cursor.read_u8()),
-        channel: cursor.read_u8(),
-        next_hop: cursor.read_u8(),
-        relay_node: cursor.read_u8(),
-    };
+    let header = MestasticHeader::read(&mut cursor);
     let pos = cursor.position();
-    let data = &mut data[pos..];
-    info!("recv: {} ({} bytes payload)", header, data.len());
 
-    // CCM used only for personal messages
-    if !header.is_broadcast() && let Some(packet) = try_decode_ccm(data, &header, key, out) {
-        Some(packet)
-    } else if let Some(packet) = try_decode_ctr(data, &header, Key::Key128(&DEFAULT_PSK)) {
-        Some(packet)
+    let data = &mut data[pos..];
+    let dataptr = data.as_mut_ptr();
+
+    {
+        info!("recv: {} ({} bytes payload)", header, data.len());
+
+        // CCM used only for personal messages
+        if !header.is_broadcast() && let Some(packet) = try_decode_ccm(data, &header, key, out) {
+            return Some((header, Data::read(&mut Cursor::new(packet))));
+        }
+    }
+
+    // This hack is needed to workaround borrowck bug (see conditional borrow return)
+    let data = unsafe {
+        core::slice::from_raw_parts_mut(dataptr, data.len())
+    };
+
+    if let Some(packet) = try_decode_ctr(data, &header, Key::Key128(&DEFAULT_PSK)) {
+        return Some((header, Data::read(&mut Cursor::new(packet))));
+    }
+
+    None
+}
+
+fn try_encode_ccm<'buffer, 'key>(data: &'buffer [u8], header: &MestasticHeader, extra_nonce: u32, key: Key<'key>, out: &'buffer mut ArrayVec<u8, 256>) -> Option<&'buffer [u8]> {
+    let nonce = Nonce {
+        packet_id: header.packet_id,
+        extra: extra_nonce,
+        from: header.from,
+        pad: 0,
+    };
+    aes_256_ccm_encrypt(data, &nonce, key, out)
+}
+
+fn try_encode_ctr<'buffer, 'key>(data: &'buffer mut [u8], header: &MestasticHeader, key: Key<'key>) -> Option<&'buffer [u8]> {
+    let nonce = Nonce {
+        packet_id: header.packet_id,
+        extra: 0,
+        from: header.from,
+        pad: 0,
+    };
+    aes_256_ctr(data, &nonce, key)
+}
+
+fn try_encode<'buffer, 'key>(buffer: &'buffer mut [u8], data: &Data<'buffer>, header: &MestasticHeader, key: Key<'key>, out: &'buffer mut ArrayVec<u8, 256>) -> Option<&'buffer [u8]> {
+    let mut cursor = Cursor::new(&mut *buffer);
+    header.write(&mut cursor);
+    let header_end = cursor.position();
+    data.write(&mut cursor);
+    let data_end = cursor.position();
+    let data = &mut buffer[header_end..data_end];
+    if try_encode_ctr(data, header, Key::Key128(&DEFAULT_PSK)).is_some() {
+        Some(&buffer[..data_end])
     } else {
         None
     }
