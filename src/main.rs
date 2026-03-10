@@ -21,11 +21,12 @@ use {defmt_rtt as _, panic_probe as _};
 use crate::meshtastic::{MestasticHeader, NodeId, Nonce, PacketFlags};
 use crate::radio::{LoraBandwidth, LoraCodingRate, LoraHeaderType, LoraSpreadingFactor, OutputPower, Radio, RadioConfig, RampTime};
 
+type Aes128Ctr = ctr::Ctr32LE<aes::Aes128>;
 type Aes256Ctr = ctr::Ctr32LE<aes::Aes256>;
 type Aes256CcmL2 = ccm::Ccm<aes::Aes256, U8, U13>;
 
-// const PRIV: [u8; 32] = [0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
-const PRIV: [u8; 32] = *b"\x3D\x7E\xA1\x40\xBB\x87\x51\x34\x3B\x6D\x84\x7B\x64\x2C\x09\x6A\x9F\x01\x33\xC3\x29\xCC\x48\x80\x6B\x17\x66\x25\xC0\xB7\x91\x29";
+const PRIV: [u8; 32] = [0x00; 32];
+const DEFAULT_PSK: [u8; 16] = [0xd4, 0xf1, 0xbb, 0x3a, 0x20, 0x29, 0x07, 0x59, 0xf0, 0xbc, 0xff, 0xab, 0xcf, 0x4e, 0x69, 0x01];
 const PUB: [u8; 32] = [0x06, 0xD8, 0x72, 0xFE, 0x4C, 0xB1, 0x45, 0x1E, 0xC3, 0x3F, 0x78, 0xCA, 0x62, 0xA8, 0x7A, 0x76, 0x1E, 0x73, 0x49, 0xFC, 0xC2, 0x3B, 0xC2, 0xD7, 0x31, 0x65, 0x13, 0x8F, 0x22, 0x58, 0x2B, 0x41];
 
 bind_interrupts!(struct Irqs {
@@ -109,7 +110,7 @@ async fn main(spawner: Spawner) {
     }
 }
 
-fn try_decode_ctr<'a>(data: &'a mut [u8], header: &MestasticHeader, key: &[u8; 32]) -> Option<&'a [u8]> {
+fn try_decode_ctr<'a>(data: &'a mut [u8], header: &MestasticHeader, key: Key) -> Option<&'a [u8]> {
     let nonce = Nonce {
         packet_id: header.packet_id,
         extra: 0,
@@ -119,14 +120,27 @@ fn try_decode_ctr<'a>(data: &'a mut [u8], header: &MestasticHeader, key: &[u8; 3
     aes_256_ctr(data, nonce.as_ctr_bytes(), key)
 }
 
-fn aes_256_ctr<'a>(data: &'a mut [u8], nonce: &[u8; 16], key: &[u8; 32]) -> Option<&'a [u8]> {
+fn aes_256_ctr<'a>(data: &'a mut [u8], nonce: &[u8; 16], key: Key) -> Option<&'a [u8]> {
     let nonce = GenericArray::from_slice(nonce);
-    let mut cipher = Aes256Ctr::new(&GenericArray::from_slice(key), nonce);
+    match key {
+        Key::Key128(key) => {
+            let mut cipher = Aes128Ctr::new(&GenericArray::from_slice(key), nonce);
 
-    if let Ok(()) = cipher.try_apply_keystream(data) {
-        Some(data)
-    } else {
-        None
+            if let Ok(()) = cipher.try_apply_keystream(data) {
+                Some(data)
+            } else {
+                None
+            }
+        }
+        Key::Key256(key) => {
+            let mut cipher = Aes256Ctr::new(&GenericArray::from_slice(key), nonce);
+
+            if let Ok(()) = cipher.try_apply_keystream(data) {
+                Some(data)
+            } else {
+                None
+            }
+        }
     }
 }
 
@@ -139,13 +153,8 @@ fn try_decode_ccm<'a>(data: &[u8], header: &MestasticHeader, key: &[u8; 32], out
         from: header.from,
         pad: 0,
     };
-    info!("extra nonce: {:08X}", extra_nonce);
-
     let nonce = nonce.as_ccm_bytes();
-    info!("nonce bytes: {:02x}", nonce);
     let nonce = GenericArray::from_slice(nonce);
-
-    info!("payload ({} bytes): {:02x}", data.len(), data);
 
     let cipher = Aes256CcmL2::new(&GenericArray::from_slice(key));
 
@@ -180,9 +189,14 @@ fn try_decode(data: &mut [u8], key: &[u8; 32], out: &mut ArrayVec<u8, 256>) {
     // CCM used only for personal messages
     if !header.is_broadcast() && let Some(packet) = try_decode_ccm(data, &header, key, out) {
         info!("decrypted: {:02x}", packet);
-    } else if let Some(packet) = try_decode_ctr(data, &header, &PRIV) {
+    } else if let Some(packet) = try_decode_ctr(data, &header, Key::Key128(&DEFAULT_PSK)) {
         info!("decrypted: {:02x}", packet);
     }
+}
+
+enum Key<'a> {
+    Key128(&'a [u8; 16]),
+    Key256(&'a [u8; 32]),
 }
 
 /*mod tests {
