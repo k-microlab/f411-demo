@@ -111,11 +111,10 @@ async fn main(spawner: Spawner) {
                 let data = Data::read(&mut cursor);
                 info!("data: {}", data);
 
-                /*let len = cursor.read_var_i32() as usize;
-                let mut buf = [0; 256];
-                cursor.read_bytes(&mut buf[..len]);
-                let s = unsafe { core::str::from_utf8_unchecked(&buf[..len]) };
-                info!("kind = {}, text = {}", tag, s);*/
+                if data.port_num == PortNum::TextMessageApp && let Some(payload) = data.payload {
+                    let text = unsafe { core::str::from_utf8_unchecked(payload) };
+                    info!("text message: \"{}\"", text);
+                }
             }
         }
     }
@@ -237,8 +236,9 @@ enum Key<'a> {
 }*/
 
 #[repr(u32)]
-#[derive(FromPrimitive, Format)]
+#[derive(FromPrimitive, Format, Default, Clone, Copy, PartialEq, Eq)]
 pub enum PortNum {
+    #[default]
     UnknownApp = 0,
     TextMessageApp = 1,
     RemoteHardwareApp = 2,
@@ -277,7 +277,7 @@ pub enum PortNum {
 
 #[derive(Default, Format)]
 struct Data<'a> {
-    port_num: Option<PortNum>,
+    port_num: PortNum,
     payload: Option<&'a [u8]>,
     want_response: Option<bool>,
     dest: Option<NodeId>,
@@ -294,7 +294,7 @@ impl<'a> Data<'a> {
         while cursor.remaining() > 0 {
             let (id, wire) = cursor.read_wire();
             match id {
-                1 => this.port_num = Some(PortNum::from_i32(wire.expect_var_int()).expect("unknown port number")),
+                1 => this.port_num = PortNum::from_i32(wire.expect_var_int()).expect("unknown port number"),
                 2 => this.payload = Some(wire.expect_len()),
                 3 => this.want_response = Some(wire.expect_var_int() != 0),
                 4 => this.dest = Some(NodeId(wire.expect_fixed32())),
