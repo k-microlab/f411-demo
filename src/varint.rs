@@ -1,10 +1,10 @@
 use byteorder_cursor::Cursor;
 
-trait VarIntRead {
+pub trait VarIntRead {
     fn read_var_i32(&mut self) -> i32;
 }
 
-trait VarIntWrite {
+pub trait VarIntWrite {
     fn write_var_i32(&mut self, value: i32);
 }
 

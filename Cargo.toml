@@ -39,6 +39,9 @@ chrono = { version = "^0.4", default-features = false}
 byteorder = { version = "1.5.0", default-features = false }
 byteorder-cursor = { version = "1", default-features = false }
 
+num-derive = { version = "0.4", default-features = false }
+num-traits = { version = "0.2", default-features = false }
+
 bitfield = "0.19.4"
 
 x25519-nostd = "0.1"
@@ -50,6 +53,7 @@ aead = { version = "0.5", default-features = false, features = ["heapless", "arr
 arrayvec = { version = "0.7.6", default-features = false }
 base64ct = { version = "1.8", default-features = false }
 sha2 = { version = "0.10", default-features = false }
+hex-literal = "1"
 
 [profile.release]
 debug = 2

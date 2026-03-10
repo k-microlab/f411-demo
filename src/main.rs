@@ -16,7 +16,8 @@ use embassy_stm32::spi::{Config, Spi};
 use embassy_stm32::time::Hertz;
 use embassy_stm32::gpio::{Input, Level, Output, Pull, Speed};
 use embassy_stm32::{bind_interrupts, exti, interrupt};
-
+use num_derive::FromPrimitive;
+use num_traits::FromPrimitive;
 use {defmt_rtt as _, panic_probe as _};
 use crate::meshtastic::{MestasticHeader, NodeId, Nonce, PacketFlags};
 use crate::radio::{LoraBandwidth, LoraCodingRate, LoraHeaderType, LoraSpreadingFactor, OutputPower, Radio, RadioConfig, RampTime};
@@ -36,9 +37,12 @@ bind_interrupts!(struct Irqs {
 
 pub mod radio;
 pub mod varint;
+pub mod proto;
 pub mod meshtastic;
 
+use varint::VarIntRead;
 use sha2::{Digest, Sha256};
+use crate::proto::ProtoRead;
 
 fn hash_256(data: &[u8]) -> [u8; 32] {
     // Create a new Sha256 object
@@ -101,7 +105,18 @@ async fn main(spawner: Spawner) {
             let data = &mut buffer[..size];
             info!("Received bytes: {:02x}", data);
             let mut out = ArrayVec::<u8, 256>::new();
-            try_decode(data, &shared_key, &mut out);
+            if let Some(packet) = try_decode(data, &shared_key, &mut out) {
+                info!("decrypted: {:02x}", packet);
+                let mut cursor = Cursor::new(packet);
+                let data = Data::read(&mut cursor);
+                info!("data: {}", data);
+
+                /*let len = cursor.read_var_i32() as usize;
+                let mut buf = [0; 256];
+                cursor.read_bytes(&mut buf[..len]);
+                let s = unsafe { core::str::from_utf8_unchecked(&buf[..len]) };
+                info!("kind = {}, text = {}", tag, s);*/
+            }
         }
     }
 
@@ -170,7 +185,7 @@ fn try_decode_ccm<'a>(data: &[u8], header: &MestasticHeader, key: &[u8; 32], out
     }
 }
 
-fn try_decode(data: &mut [u8], key: &[u8; 32], out: &mut ArrayVec<u8, 256>) {
+fn try_decode<'a>(data: &'a mut [u8], key: &[u8; 32], out: &'a mut ArrayVec<u8, 256>) -> Option<&'a [u8]> {
     let size = data.len();
     let mut cursor = Cursor::new(&*data);
     let header = MestasticHeader {
@@ -188,9 +203,11 @@ fn try_decode(data: &mut [u8], key: &[u8; 32], out: &mut ArrayVec<u8, 256>) {
 
     // CCM used only for personal messages
     if !header.is_broadcast() && let Some(packet) = try_decode_ccm(data, &header, key, out) {
-        info!("decrypted: {:02x}", packet);
+        Some(packet)
     } else if let Some(packet) = try_decode_ctr(data, &header, Key::Key128(&DEFAULT_PSK)) {
-        info!("decrypted: {:02x}", packet);
+        Some(packet)
+    } else {
+        None
     }
 }
 
@@ -218,3 +235,77 @@ enum Key<'a> {
         aes_256_ctr(plain, nonce, key);
     }
 }*/
+
+#[repr(u32)]
+#[derive(FromPrimitive, Format)]
+pub enum PortNum {
+    UnknownApp = 0,
+    TextMessageApp = 1,
+    RemoteHardwareApp = 2,
+    PositionApp = 3,
+    NodeInfoApp = 4,
+    RoutingApp = 5,
+    AdminApp = 6,
+    TextMessageCompressedApp = 7,
+    WaypointApp = 8,
+    AudioApp = 9,
+    DetectionSensorApp = 10,
+    AlertApp = 11,
+    KeyVerificationApp = 12,
+    ReplyApp = 32,
+    IpTunnelApp = 33,
+    PaxCounterApp = 34,
+    StoreForwardPlusPlusApp = 35,
+    NodeStatusApp = 36,
+    SerialApp = 64,
+    StoreForwardApp = 65,
+    RangeTestApp = 66,
+    TelemetryApp = 67,
+    ZpsApp = 68,
+    SimulatorApp = 69,
+    TracerouteApp = 70,
+    NeighborInfoApp = 71,
+    AtakPlugin = 72,
+    MapReportApp = 73,
+    PowerStressApp = 74,
+    ReticulumTunnelApp = 76,
+    CayenneApp = 77,
+    PrivateApp = 256,
+    AtakForwarder = 257,
+    Max = 511,
+}
+
+#[derive(Default, Format)]
+struct Data<'a> {
+    port_num: Option<PortNum>,
+    payload: Option<&'a [u8]>,
+    want_response: Option<bool>,
+    dest: Option<NodeId>,
+    source: Option<NodeId>,
+    request_id: Option<u32>,
+    reply_id: Option<u32>,
+    emoji: Option<u32>,
+    bitfield: Option<u32>,
+}
+
+impl<'a> Data<'a> {
+    pub fn read(cursor: &mut Cursor<&'a [u8]>) -> Self {
+        let mut this = Self::default();
+        while cursor.remaining() > 0 {
+            let (id, wire) = cursor.read_wire();
+            match id {
+                1 => this.port_num = Some(PortNum::from_i32(wire.expect_var_int()).expect("unknown port number")),
+                2 => this.payload = Some(wire.expect_len()),
+                3 => this.want_response = Some(wire.expect_var_int() != 0),
+                4 => this.dest = Some(NodeId(wire.expect_fixed32())),
+                5 => this.source = Some(NodeId(wire.expect_fixed32())),
+                6 => this.request_id = Some(wire.expect_fixed32()),
+                7 => this.reply_id = Some(wire.expect_fixed32()),
+                8 => this.emoji = Some(wire.expect_fixed32()),
+                9 => this.bitfield = Some(wire.expect_var_int() as u32),
+                _ => defmt::panic!("unknown proto field #{}: {}", id, wire),
+            }
+        }
+        this
+    }
+}
