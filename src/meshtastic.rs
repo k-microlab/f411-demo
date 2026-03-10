@@ -16,7 +16,13 @@ impl NodeId {
 
 impl Format for NodeId {
     fn format(&self, fmt: Formatter<'_>) {
-        defmt::write!(fmt, "{:04X}", self.0);
+        if *self == NodeId::NONE {
+            defmt::write!(fmt, "NONE");
+        } else if *self == NodeId::BROADCAST {
+            defmt::write!(fmt, "EVERYONE");
+        } else {
+            defmt::write!(fmt, "!{:08X}", self.0);
+        }
     }
 }
 
