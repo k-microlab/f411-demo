@@ -98,17 +98,12 @@ async fn main(spawner: Spawner) {
 
     let data = Data {
         port_num: PortNum::TextMessageApp,
-        payload: None,
-        want_response: None,
-        dest: None,
-        source: None,
-        request_id: None,
-        reply_id: None,
-        emoji: None,
-        bitfield: None,
+        payload: b"",
+        want_response: true,
+        .. Default::default()
     };
     let header = MestasticHeader {
-        to: NodeId(u32::MAX), // Broadcast
+        to: NodeId::BROADCAST,
         from: NodeId(0x01020304),
         packet_id: 1,
         flags: PacketFlags::new(7, true, false, 0),
@@ -118,6 +113,7 @@ async fn main(spawner: Spawner) {
     };
     let mut out = ArrayVec::<u8, 256>::new();
     if let Some(payload) = try_encode(&mut buffer, &data, &header, Key::Key256(&shared_key), &mut out) {
+        warn!("sending encrypted payload: {:02x}", payload);
         radio.transmit(payload, 60_000.0, true).await.expect("transmit failed");
     }
 
@@ -132,8 +128,7 @@ async fn main(spawner: Spawner) {
             if let Some((header, data)) = try_decode(data, Key::Key256(&shared_key), &mut out) {
                 info!("data: {}", data);
 
-                if data.port_num == PortNum::TextMessageApp && let Some(payload) = data.payload {
-                    let text = unsafe { core::str::from_utf8_unchecked(payload) };
+                if data.port_num == PortNum::TextMessageApp && let Some(text) = core::str::from_utf8(data.payload).ok() {
                     info!("text message: \"{}\"", text);
                 }
             }

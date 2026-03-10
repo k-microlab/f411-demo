@@ -6,8 +6,13 @@ use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
 use crate::proto::{ProtoRead, ProtoWrite, Wire};
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct NodeId(pub u32);
+
+impl NodeId {
+    pub const NONE: NodeId = NodeId(0);
+    pub const BROADCAST: NodeId = NodeId(u32::MAX);
+}
 
 impl Format for NodeId {
     fn format(&self, fmt: Formatter<'_>) {
@@ -141,13 +146,13 @@ pub enum PortNum {
 #[derive(Default, Format)]
 pub struct Data<'a> {
     pub port_num: PortNum,
-    pub payload: Option<&'a [u8]>,
-    pub want_response: Option<bool>,
-    pub dest: Option<NodeId>,
-    pub source: Option<NodeId>,
-    pub request_id: Option<u32>,
-    pub reply_id: Option<u32>,
-    pub emoji: Option<u32>,
+    pub payload: &'a [u8],
+    pub want_response: bool,
+    pub dest: NodeId,
+    pub source: NodeId,
+    pub request_id: u32,
+    pub reply_id: u32,
+    pub emoji: u32,
     pub bitfield: Option<u32>,
 }
 
@@ -158,13 +163,13 @@ impl<'a> Data<'a> {
             let (id, wire) = cursor.read_wire();
             match id {
                 1 => this.port_num = PortNum::from_i32(wire.expect_var_int()).expect("unknown port number"),
-                2 => this.payload = Some(wire.expect_len()),
-                3 => this.want_response = Some(wire.expect_var_int() != 0),
-                4 => this.dest = Some(NodeId(wire.expect_fixed32())),
-                5 => this.source = Some(NodeId(wire.expect_fixed32())),
-                6 => this.request_id = Some(wire.expect_fixed32()),
-                7 => this.reply_id = Some(wire.expect_fixed32()),
-                8 => this.emoji = Some(wire.expect_fixed32()),
+                2 => this.payload = wire.expect_len(),
+                3 => this.want_response = wire.expect_var_int() != 0,
+                4 => this.dest = NodeId(wire.expect_fixed32()),
+                5 => this.source = NodeId(wire.expect_fixed32()),
+                6 => this.request_id = wire.expect_fixed32(),
+                7 => this.reply_id = wire.expect_fixed32(),
+                8 => this.emoji = wire.expect_fixed32(),
                 9 => this.bitfield = Some(wire.expect_var_int() as u32),
                 _ => defmt::panic!("unknown proto field #{}: {}", id, wire),
             }
@@ -174,26 +179,26 @@ impl<'a> Data<'a> {
 
     pub fn write(&self, cursor: &mut Cursor<&'a mut [u8]>) {
         cursor.write_wire(1, Wire::VarInt(self.port_num as i32));
-        if let Some(payload) = self.payload {
-            cursor.write_wire(2, Wire::Len(payload));
+        if self.payload.len() > 0 {
+            cursor.write_wire(2, Wire::Len(self.payload));
         }
-        if let Some(want_response) = self.want_response {
-            cursor.write_wire(3, Wire::VarInt(want_response as i32));
+        if self.want_response {
+            cursor.write_wire(3, Wire::VarInt(self.want_response as i32));
         }
-        if let Some(dest) = self.dest {
-            cursor.write_wire(4, Wire::Fixed32(dest.0));
+        if self.dest != NodeId::NONE {
+            cursor.write_wire(4, Wire::Fixed32(self.dest.0));
         }
-        if let Some(source) = self.source {
-            cursor.write_wire(5, Wire::Fixed32(source.0));
+        if self.source != NodeId::NONE {
+            cursor.write_wire(5, Wire::Fixed32(self.source.0));
         }
-        if let Some(request_id) = self.request_id {
-            cursor.write_wire(6, Wire::Fixed32(request_id));
+        if self.request_id != 0 {
+            cursor.write_wire(6, Wire::Fixed32(self.request_id));
         }
-        if let Some(reply_id) = self.reply_id {
-            cursor.write_wire(7, Wire::Fixed32(reply_id));
+        if self.reply_id != 0 {
+            cursor.write_wire(7, Wire::Fixed32(self.reply_id));
         }
-        if let Some(emoji) = self.emoji {
-            cursor.write_wire(8, Wire::Fixed32(emoji));
+        if self.emoji != 0 {
+            cursor.write_wire(8, Wire::Fixed32(self.emoji));
         }
         if let Some(bitfield) = self.bitfield {
             cursor.write_wire(9, Wire::VarInt(bitfield as i32));
