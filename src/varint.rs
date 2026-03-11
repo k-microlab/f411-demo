@@ -1,4 +1,4 @@
-use byteorder_cursor::Cursor;
+use crate::cursor::Cursor;
 
 pub trait VarIntRead {
     fn read_var_i32(&mut self) -> i32;
@@ -34,6 +34,19 @@ impl VarIntWrite for Cursor<&mut [u8]> {
                 self.write_u8(((temp & 0x7F) | 0x80) as u8);
                 temp >>= 7;
             }
+        }
+    }
+}
+
+pub fn len_of(value: i32) -> usize {
+    let mut len = 0;
+    let mut temp = value as u32;
+    loop {
+        if (temp & !0x7fu32) == 0 {
+            return len + 1;
+        } else {
+            len += 1;
+            temp >>= 7;
         }
     }
 }

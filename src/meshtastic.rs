@@ -1,12 +1,14 @@
 use bitfield::bitfield;
 use byteorder::LittleEndian;
-use byteorder_cursor::Cursor;
-use defmt::{Format, Formatter};
+use defmt::{info, Format, Formatter};
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
-use crate::proto::{ProtoRead, ProtoWrite, Wire};
+use crate::cursor::Cursor;
+use crate::proto;
+use crate::proto::{ReadWire, WriteWire, Wire, FromWire, ToWire};
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(transparent)]
 pub struct NodeId(pub u32);
 
 impl NodeId {
@@ -38,7 +40,7 @@ pub struct MestasticHeader {
 }
 
 impl MestasticHeader {
-    pub fn read(cursor: &mut Cursor<&[u8]>) -> Self {
+    pub fn read(cursor: &mut Cursor<&mut [u8]>) -> Self {
         Self {
             to: NodeId(cursor.read_u32::<LittleEndian>()),
             from: NodeId(cursor.read_u32::<LittleEndian>()),
@@ -51,12 +53,19 @@ impl MestasticHeader {
     }
 
     pub fn write(&self, cursor: &mut Cursor<&mut [u8]>) {
+        info!("to!");
         cursor.write_u32::<LittleEndian>(self.to.0);
+        info!("from!");
         cursor.write_u32::<LittleEndian>(self.from.0);
+        info!("packet_id!");
         cursor.write_u32::<LittleEndian>(self.packet_id);
+        info!("flags!");
         cursor.write_u8(self.flags.0);
+        info!("channel!");
         cursor.write_u8(self.channel);
+        info!("next_hop!");
         cursor.write_u8(self.next_hop);
+        info!("relay_node!");
         cursor.write_u8(self.relay_node);
     }
 
@@ -149,65 +158,49 @@ pub enum PortNum {
     Max = 511,
 }
 
-#[derive(Default, Format)]
-pub struct Data<'a> {
-    pub port_num: PortNum,
-    pub payload: &'a [u8],
-    pub want_response: bool,
-    pub dest: NodeId,
-    pub source: NodeId,
-    pub request_id: u32,
-    pub reply_id: u32,
-    pub emoji: u32,
-    pub bitfield: Option<u32>,
+impl<'a> FromWire<'a> for PortNum {
+    fn from_wire(wire: Wire<'a>, field: &'static str) -> Self {
+        PortNum::from_i32(wire.expect_var_int(field)).expect("unknown port number")
+    }
 }
 
-impl<'a> Data<'a> {
-    pub fn read(cursor: &mut Cursor<&'a [u8]>) -> Self {
-        let mut this = Self::default();
-        while cursor.remaining() > 0 {
-            let (id, wire) = cursor.read_wire();
-            match id {
-                1 => this.port_num = PortNum::from_i32(wire.expect_var_int()).expect("unknown port number"),
-                2 => this.payload = wire.expect_len(),
-                3 => this.want_response = wire.expect_var_int() != 0,
-                4 => this.dest = NodeId(wire.expect_fixed32()),
-                5 => this.source = NodeId(wire.expect_fixed32()),
-                6 => this.request_id = wire.expect_fixed32(),
-                7 => this.reply_id = wire.expect_fixed32(),
-                8 => this.emoji = wire.expect_fixed32(),
-                9 => this.bitfield = Some(wire.expect_var_int() as u32),
-                _ => defmt::panic!("unknown proto field #{}: {}", id, wire),
-            }
-        }
-        this
+impl<'a> ToWire<'a> for PortNum {
+    fn to_wire(&self, cursor: &mut Cursor<&'a mut [u8]>) -> Option<Wire<'a>> {
+        if *self == PortNum::UnknownApp { None } else { Some(Wire::VarInt(*self as i32)) }
     }
 
-    pub fn write(&self, cursor: &mut Cursor<&'a mut [u8]>) {
-        cursor.write_wire(1, Wire::VarInt(self.port_num as i32));
-        if self.payload.len() > 0 {
-            cursor.write_wire(2, Wire::Len(self.payload));
-        }
-        if self.want_response {
-            cursor.write_wire(3, Wire::VarInt(self.want_response as i32));
-        }
-        if self.dest != NodeId::NONE {
-            cursor.write_wire(4, Wire::Fixed32(self.dest.0));
-        }
-        if self.source != NodeId::NONE {
-            cursor.write_wire(5, Wire::Fixed32(self.source.0));
-        }
-        if self.request_id != 0 {
-            cursor.write_wire(6, Wire::Fixed32(self.request_id));
-        }
-        if self.reply_id != 0 {
-            cursor.write_wire(7, Wire::Fixed32(self.reply_id));
-        }
-        if self.emoji != 0 {
-            cursor.write_wire(8, Wire::Fixed32(self.emoji));
-        }
-        if let Some(bitfield) = self.bitfield {
-            cursor.write_wire(9, Wire::VarInt(bitfield as i32));
-        }
+    fn wire_len(&self) -> usize {
+        if *self == PortNum::UnknownApp { 0 } else { crate::varint::len_of(*self as i32) }
+    }
+}
+
+impl<'a> FromWire<'a> for NodeId {
+    fn from_wire(wire: Wire<'a>, field: &'static str) -> Self {
+        Self(wire.expect_fixed32(field))
+    }
+}
+
+impl<'a> ToWire<'a> for NodeId {
+    fn to_wire(&self, cursor: &mut Cursor<&'a mut [u8]>) -> Option<Wire<'a>> {
+        if *self == NodeId::NONE { None } else { Some(Wire::Fixed32(self.0)) }
+    }
+
+    fn wire_len(&self) -> usize {
+        if *self == NodeId::NONE { 0 } else { 4 }
+    }
+}
+
+
+proto! {
+    pub struct Data<'a> {
+        pub port_num: PortNum = 1,
+        pub payload: &'a [u8] = 2,
+        pub want_response: bool = 3,
+        pub dest: NodeId = 4,
+        pub source: NodeId = 5,
+        pub request_id: u32 = 6,
+        pub reply_id: u32 = 7,
+        pub emoji: u32 = 8,
+        pub bitfield: Option<u32> = 9,
     }
 }

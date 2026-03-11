@@ -6,8 +6,6 @@ use aes::cipher::{KeyIvInit, StreamCipher};
 use aes::cipher::generic_array::GenericArray;
 use arrayvec::ArrayVec;
 use x25519_nostd::{public_key, diffie_hellman};
-use byteorder::LittleEndian;
-use byteorder_cursor::Cursor;
 use ccm::consts::{U13, U8};
 use defmt::*;
 use embassy_executor::Spawner;
@@ -37,10 +35,13 @@ bind_interrupts!(struct Irqs {
 
 pub mod radio;
 pub mod varint;
+pub mod cursor;
 pub mod proto;
 pub mod meshtastic;
 
 use sha2::{Digest, Sha256};
+use crate::cursor::Cursor;
+use crate::proto::{FromWire, ToWire, Wire};
 
 fn hash_256(data: &[u8]) -> [u8; 32] {
     // Create a new Sha256 object
@@ -105,7 +106,7 @@ async fn main(spawner: Spawner) {
     let header = MestasticHeader {
         to: NodeId::BROADCAST,
         from: NodeId(0x01020304),
-        packet_id: 1,
+        packet_id: 131,
         flags: PacketFlags::new(7, true, false, 0),
         channel: 8,
         next_hop: 0,
@@ -247,11 +248,10 @@ fn try_decode_ccm<'buffer, 'key>(data: &'buffer [u8], header: &MestasticHeader, 
 }
 
 fn try_decode<'buffer, 'key>(data: &'buffer mut [u8], key: Key<'key>, out: &'buffer mut ArrayVec<u8, 256>) -> Option<(MestasticHeader, Data<'buffer>)> {
-    let mut cursor = Cursor::new(&*data);
+    let mut cursor = Cursor::<&mut [u8]>::new(&mut *data);
     let header = MestasticHeader::read(&mut cursor);
-    let pos = cursor.position();
-
-    let data = &mut data[pos..];
+    let start = size_of_val(&header);
+    let data = cursor.into_inner_mut();
     let dataptr = data.as_mut_ptr();
 
     {
@@ -259,7 +259,7 @@ fn try_decode<'buffer, 'key>(data: &'buffer mut [u8], key: Key<'key>, out: &'buf
 
         // CCM used only for personal messages
         if !header.is_broadcast() && let Some(packet) = try_decode_ccm(data, &header, key, out) {
-            return Some((header, Data::read(&mut Cursor::new(packet))));
+            return Some((header, Data::from_wire(Wire::Len(packet), "packet")));
         }
     }
 
@@ -269,7 +269,7 @@ fn try_decode<'buffer, 'key>(data: &'buffer mut [u8], key: Key<'key>, out: &'buf
     };
 
     if let Some(packet) = try_decode_ctr(data, &header, Key::Key128(&DEFAULT_PSK)) {
-        return Some((header, Data::read(&mut Cursor::new(packet))));
+        return Some((header, Data::from_wire(Wire::Len(packet), "packet")));
     }
 
     None
@@ -296,14 +296,18 @@ fn try_encode_ctr<'buffer, 'key>(data: &'buffer mut [u8], header: &MestasticHead
 }
 
 fn try_encode<'buffer, 'key>(buffer: &'buffer mut [u8], data: &Data<'buffer>, header: &MestasticHeader, key: Key<'key>, out: &'buffer mut ArrayVec<u8, 256>) -> Option<&'buffer [u8]> {
-    let mut cursor = Cursor::new(&mut *buffer);
+    let total = buffer.len();
+    let mut len = 0;
+    let mut cursor = Cursor::<&mut [u8]>::new(&mut *buffer);
+    info!("bef!");
     header.write(&mut cursor);
-    let header_end = cursor.position();
-    data.write(&mut cursor);
-    let data_end = cursor.position();
-    let data = &mut buffer[header_end..data_end];
-    if try_encode_ctr(data, header, Key::Key128(&DEFAULT_PSK)).is_some() {
-        Some(&buffer[..data_end])
+    len += total - cursor.len();
+    info!("header written!");
+    let dw = data.to_wire(&mut cursor).unwrap();
+    let data = dw.expect_len_mut("packet");
+    if let Some(data) = try_encode_ctr(data, header, Key::Key128(&DEFAULT_PSK)) {
+        len += data.len();
+        Some(&buffer[..len])
     } else {
         None
     }
