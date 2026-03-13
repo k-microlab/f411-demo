@@ -130,7 +130,7 @@ async fn main(spawner: Spawner) {
                 info!("data: {}", data);
 
                 if data.port_num == PortNum::TextMessageApp && let Some(text) = core::str::from_utf8(data.payload).ok() {
-                    info!("text message: \"{}\"", text);
+                    info!("text message: '{}'", text);
                 }
             }
         }
