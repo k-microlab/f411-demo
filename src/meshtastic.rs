@@ -53,19 +53,12 @@ impl MestasticHeader {
     }
 
     pub fn write(&self, cursor: &mut Cursor<&mut [u8]>) {
-        info!("to!");
         cursor.write_u32::<LittleEndian>(self.to.0);
-        info!("from!");
         cursor.write_u32::<LittleEndian>(self.from.0);
-        info!("packet_id!");
         cursor.write_u32::<LittleEndian>(self.packet_id);
-        info!("flags!");
         cursor.write_u8(self.flags.0);
-        info!("channel!");
         cursor.write_u8(self.channel);
-        info!("next_hop!");
         cursor.write_u8(self.next_hop);
-        info!("relay_node!");
         cursor.write_u8(self.relay_node);
     }
 
