@@ -115,7 +115,11 @@ async fn main(spawner: Spawner) {
     let mut out = ArrayVec::<u8, 256>::new();
     if let Some(payload) = try_encode(&mut buffer, &data, &header, Key::Key256(&shared_key), &mut out) {
         warn!("sending encrypted payload: {:02x}", payload);
-        radio.transmit(payload, 60_000.0, true).await.expect("transmit failed");
+        // radio.transmit(payload, 60_000.0, true).await.expect("transmit failed");
+        let mut out = ArrayVec::<u8, 256>::new();
+        if let Some((header, data)) = try_decode(payload, Key::Key256(&shared_key), &mut out) {
+            warn!("decoded our own data: {}", data);
+        }
     }
 
 
@@ -295,19 +299,19 @@ fn try_encode_ctr<'buffer, 'key>(data: &'buffer mut [u8], header: &MestasticHead
     aes_256_ctr(data, &nonce, key)
 }
 
-fn try_encode<'buffer, 'key>(buffer: &'buffer mut [u8], data: &Data<'buffer>, header: &MestasticHeader, key: Key<'key>, out: &'buffer mut ArrayVec<u8, 256>) -> Option<&'buffer [u8]> {
+fn try_encode<'buffer, 'key>(buffer: &'buffer mut [u8], data: &Data<'buffer>, header: &MestasticHeader, key: Key<'key>, out: &'buffer mut ArrayVec<u8, 256>) -> Option<&'buffer mut [u8]> {
     let total = buffer.len();
     let mut len = 0;
     let mut cursor = Cursor::<&mut [u8]>::new(&mut *buffer);
     info!("bef!");
     header.write(&mut cursor);
     len += total - cursor.len();
-    info!("header written!");
+    info!("header written! {}", total - cursor.len());
     let dw = data.to_wire(&mut cursor).unwrap();
     let data = dw.expect_len_mut("packet");
     if let Some(data) = try_encode_ctr(data, header, Key::Key128(&DEFAULT_PSK)) {
         len += data.len();
-        Some(&buffer[..len])
+        Some(&mut buffer[..len])
     } else {
         None
     }
