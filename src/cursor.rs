@@ -39,7 +39,7 @@ impl<'buffer> Cursor<&'buffer [u8]> {
         let len = self.buffer.len();
         assert!(len >= N, "buffer underflow");
         let ptr = self.buffer.as_ptr();
-        self.buffer = unsafe { core::slice::from_raw_parts(ptr.add(len), len - N) };
+        self.buffer = unsafe { core::slice::from_raw_parts(ptr.add(N), len - N) };
         unsafe { &*(ptr as *const [u8; N]) }
     }
 
