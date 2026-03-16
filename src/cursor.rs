@@ -150,7 +150,7 @@ impl<'buffer> Cursor<&'buffer mut [u8]> {
         let len = self.buffer.len();
         assert!(len >= N, "buffer overflow");
         let ptr = self.buffer.as_mut_ptr();
-        self.buffer = unsafe { core::slice::from_raw_parts_mut(ptr.add(len), len - N) };
+        self.buffer = unsafe { core::slice::from_raw_parts_mut(ptr.add(N), len - N) };
         unsafe { &mut *(ptr as *mut [u8; N]) }
     }
 
