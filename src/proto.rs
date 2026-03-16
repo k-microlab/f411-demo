@@ -325,14 +325,15 @@ impl<'a> ToWire<'a> for &'a str {
 #[macro_export]
 macro_rules! proto {
     ($sv:vis struct $name:ident $(<$lt:lifetime>)? {
-        $($fv:vis $field:ident: $ty:ty = $id: literal),* $(,)?
+        $($(#[$attr:meta])* $fv:vis $field:ident: $ty:ty = $id: literal),* $(,)?
     }) => {
         #[derive(Default, defmt::Format)]
         $sv struct $name $(<$lt>)? {
-            $($fv $field: $ty),*
+            $($(#[$attr])* $fv $field: $ty),*
         }
 
         impl<'a> crate::proto::FromWire<'a> for $name $(<$lt>)? {
+            #[allow(deprecated)]
             fn from_wire(wire: crate::proto::Wire<'a>, field: &'static str) -> Self {
                 let payload = wire.expect_len(field);
                 let mut cursor = Cursor::<&'a [u8]>::new(payload);
@@ -349,6 +350,7 @@ macro_rules! proto {
         }
 
         impl<'a> crate::proto::ToWire<'a> for $name $(<$lt>)? {
+            #[allow(deprecated)]
             fn to_unsized_bytes(&self, cursor: &mut crate::cursor::Cursor<&'a mut [u8]>) -> &'a mut [u8] {
                 let len = self.wire_len();
                 let payload = cursor.take_slice_mut(len);
@@ -362,6 +364,7 @@ macro_rules! proto {
                 payload
             }
 
+            #[allow(deprecated)]
             fn to_wire(&self, cursor: &mut crate::cursor::Cursor<&'a mut [u8]>) -> Option<crate::proto::Wire<'a>> {
                 use crate::varint::VarIntWrite;
 
@@ -379,6 +382,7 @@ macro_rules! proto {
                 Some(crate::proto::Wire::LenMut(payload))
             }
 
+            #[allow(deprecated)]
             fn wire_len(&self) -> usize {
                 let mut len = 0;
                 $({
