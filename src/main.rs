@@ -1,12 +1,8 @@
 #![no_std]
 #![no_main]
 
-use ccm::{AeadInPlace, KeyInit};
-use aes::cipher::{KeyIvInit, StreamCipher};
-use aes::cipher::generic_array::GenericArray;
 use arrayvec::ArrayVec;
 use x25519_nostd::{public_key, diffie_hellman};
-use ccm::consts::{U13, U8};
 use defmt::*;
 use embassy_executor::Spawner;
 use embassy_stm32::exti::ExtiInput;
@@ -16,13 +12,9 @@ use embassy_stm32::gpio::{Input, Level, Output, Pull, Speed};
 use embassy_stm32::{bind_interrupts, exti, interrupt};
 
 use {defmt_rtt as _, panic_probe as _};
+use crate::crypto::aes::Key;
 use crate::meshtastic::{Data, MestasticHeader, NodeId, Nonce, PacketFlags, PortNum, User};
 use crate::radio::{LoraBandwidth, LoraCodingRate, LoraHeaderType, LoraSpreadingFactor, OutputPower, Radio, RadioConfig, RampTime};
-
-type Aes128Ctr = ctr::Ctr32BE<aes::Aes128>;
-type Aes256Ctr = ctr::Ctr32BE<aes::Aes256>;
-type Aes128CcmL2 = ccm::Ccm<aes::Aes128, U8, U13>;
-type Aes256CcmL2 = ccm::Ccm<aes::Aes256, U8, U13>;
 
 const PRIV: [u8; 32] = [0x00; 32];
 const DEFAULT_PSK: [u8; 16] = [0xd4, 0xf1, 0xbb, 0x3a, 0x20, 0x29, 0x07, 0x59, 0xf0, 0xbc, 0xff, 0xab, 0xcf, 0x4e, 0x69, 0x01];
@@ -33,30 +25,15 @@ bind_interrupts!(struct Irqs {
     EXTI4 => exti::InterruptHandler<interrupt::typelevel::EXTI4>;
 });
 
+pub mod crypto;
 pub mod radio;
 pub mod varint;
 pub mod cursor;
 pub mod proto;
 pub mod meshtastic;
 
-use sha2::{Digest, Sha256};
 use crate::cursor::Cursor;
 use crate::proto::{FromWire, ToWire, Wire};
-
-fn hash_256(data: &[u8]) -> [u8; 32] {
-    // Create a new Sha256 object
-    let mut hasher = Sha256::new();
-
-    // Input data to hash (can be called repeatedly)
-    hasher.update(data);
-
-    // Read hash digest and consume hasher
-    let result = hasher.finalize();
-
-    // Convert GenericArray<u8, U32> to a fixed size array [u8; 32]
-    // The result is a GenericArray, which can be safely turned into a fixed size array of 32 bytes
-    result.into()
-}
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
@@ -95,7 +72,7 @@ async fn main(spawner: Spawner) {
 
     let mut buffer = [0; 255];
 
-    let shared_key = hash_256(&diffie_hellman(&PRIV, &PUB));
+    let shared_key = crypto::sha::hash_256(&diffie_hellman(&PRIV, &PUB));
 
     let data = Data {
         port_num: PortNum::TextMessageApp,
@@ -161,91 +138,7 @@ fn try_decode_ctr<'buffer, 'key>(data: &'buffer mut [u8], header: &MestasticHead
         from: header.from,
         pad: 0,
     };
-    aes_256_ctr(data, &nonce, key)
-}
-
-fn aes_256_ctr<'buffer, 'key>(data: &'buffer mut [u8], nonce: &Nonce, key: Key<'key>) -> Option<&'buffer [u8]> {
-    let nonce = GenericArray::from_slice(nonce.as_ctr_bytes());
-    match key {
-        Key::Key128(key) => {
-            let mut cipher = Aes128Ctr::new(&GenericArray::from_slice(key), nonce);
-
-            if let Ok(()) = cipher.try_apply_keystream(data) {
-                Some(data)
-            } else {
-                None
-            }
-        }
-        Key::Key256(key) => {
-            let mut cipher = Aes256Ctr::new(&GenericArray::from_slice(key), nonce);
-
-            if let Ok(()) = cipher.try_apply_keystream(data) {
-                Some(data)
-            } else {
-                None
-            }
-        }
-    }
-}
-
-fn aes_256_ccm_decrypt<'buffer, 'key>(data: &'buffer [u8], nonce: &Nonce, key: Key<'key>, out: &'buffer mut ArrayVec<u8, 256>) -> Option<&'buffer [u8]> {
-    let nonce = GenericArray::from_slice(nonce.as_ccm_bytes());
-
-    unsafe {
-        out.set_len(data.len());
-    }
-    out.copy_from_slice(data);
-
-    match key {
-        Key::Key128(key) => {
-            let cipher = Aes128CcmL2::new(&GenericArray::from_slice(key));
-
-            if let Ok(()) = cipher.decrypt_in_place(&nonce, &[], out) {
-                Some(out.as_slice())
-            } else {
-                None
-            }
-        }
-        Key::Key256(key) => {
-            let cipher = Aes256CcmL2::new(&GenericArray::from_slice(key));
-
-            if let Ok(()) = cipher.decrypt_in_place(&nonce, &[], out) {
-                Some(out.as_slice())
-            } else {
-                None
-            }
-        }
-    }
-}
-
-fn aes_256_ccm_encrypt<'buffer, 'key>(data: &'buffer [u8], nonce: &Nonce, key: Key<'key>, out: &'buffer mut ArrayVec<u8, 256>) -> Option<&'buffer [u8]> {
-    let nonce = GenericArray::from_slice(nonce.as_ccm_bytes());
-
-    unsafe {
-        out.set_len(data.len());
-    }
-    out.copy_from_slice(data);
-
-    match key {
-        Key::Key128(key) => {
-            let cipher = Aes128CcmL2::new(&GenericArray::from_slice(key));
-
-            if let Ok(()) = cipher.encrypt_in_place(&nonce, &[], out) {
-                Some(out.as_slice())
-            } else {
-                None
-            }
-        }
-        Key::Key256(key) => {
-            let cipher = Aes256CcmL2::new(&GenericArray::from_slice(key));
-
-            if let Ok(()) = cipher.encrypt_in_place(&nonce, &[], out) {
-                Some(out.as_slice())
-            } else {
-                None
-            }
-        }
-    }
+    crypto::aes::aes_256_ctr(data, &nonce, key)
 }
 
 fn try_decode_ccm<'buffer, 'key>(data: &'buffer [u8], header: &MestasticHeader, key: Key<'key>, out: &'buffer mut ArrayVec<u8, 256>) -> Option<&'buffer [u8]> {
@@ -257,7 +150,7 @@ fn try_decode_ccm<'buffer, 'key>(data: &'buffer [u8], header: &MestasticHeader, 
         from: header.from,
         pad: 0,
     };
-    aes_256_ccm_decrypt(data, &nonce, key, out)
+    crypto::aes::aes_256_ccm_decrypt(data, &nonce, key, out)
 }
 
 fn try_decode<'buffer, 'key>(data: &'buffer mut [u8], key: Key<'key>, out: &'buffer mut ArrayVec<u8, 256>) -> Option<(MestasticHeader, Data<'buffer>)> {
@@ -297,7 +190,7 @@ fn try_encode_ccm<'buffer, 'key>(data: &'buffer [u8], header: &MestasticHeader, 
         from: header.from,
         pad: 0,
     };
-    aes_256_ccm_encrypt(data, &nonce, key, out)
+    crypto::aes::aes_256_ccm_encrypt(data, &nonce, key, out)
 }
 
 fn try_encode_ctr<'buffer, 'key>(data: &'buffer mut [u8], header: &MestasticHeader, key: Key<'key>) -> Option<&'buffer [u8]> {
@@ -307,7 +200,7 @@ fn try_encode_ctr<'buffer, 'key>(data: &'buffer mut [u8], header: &MestasticHead
         from: header.from,
         pad: 0,
     };
-    aes_256_ctr(data, &nonce, key)
+    crypto::aes::aes_256_ctr(data, &nonce, key)
 }
 
 fn try_encode<'buffer, 'key>(buffer: &'buffer mut [u8], data: &Data<'buffer>, header: &MestasticHeader, key: Key<'key>, out: &'buffer mut ArrayVec<u8, 256>) -> Option<&'buffer mut [u8]> {
@@ -327,11 +220,6 @@ fn try_encode<'buffer, 'key>(buffer: &'buffer mut [u8], data: &Data<'buffer>, he
     } else {
         None
     }
-}
-
-enum Key<'a> {
-    Key128(&'a [u8; 16]),
-    Key256(&'a [u8; 32]),
 }
 
 /*mod tests {
