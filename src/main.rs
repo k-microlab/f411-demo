@@ -99,7 +99,7 @@ async fn main(spawner: Spawner) {
 
     let data = Data {
         port_num: PortNum::TextMessageApp,
-        payload: b"",
+        payload: b"0",
         want_response: true,
         .. Default::default()
     };
@@ -259,7 +259,8 @@ fn try_decode<'buffer, 'key>(data: &'buffer mut [u8], key: Key<'key>, out: &'buf
     let dataptr = data.as_mut_ptr();
 
     {
-        info!("recv: {} ({} bytes payload)", header, data.len());
+        info!("recv: {}", header);
+        info!("payload is {} bytes: {:02x}", data.len(), data);
 
         // CCM used only for personal messages
         if !header.is_broadcast() && let Some(packet) = try_decode_ccm(data, &header, key, out) {
@@ -273,6 +274,7 @@ fn try_decode<'buffer, 'key>(data: &'buffer mut [u8], key: Key<'key>, out: &'buf
     };
 
     if let Some(packet) = try_decode_ctr(data, &header, Key::Key128(&DEFAULT_PSK)) {
+        info!("decoded bytes: {:02x}", packet);
         return Some((header, Data::from_wire(Wire::Len(packet), "packet")));
     }
 
@@ -303,14 +305,15 @@ fn try_encode<'buffer, 'key>(buffer: &'buffer mut [u8], data: &Data<'buffer>, he
     let total = buffer.len();
     let mut len = 0;
     let mut cursor = Cursor::<&mut [u8]>::new(&mut *buffer);
-    info!("bef!");
     header.write(&mut cursor);
     len += total - cursor.len();
-    info!("header written! {}", total - cursor.len());
-    let dw = data.to_wire(&mut cursor).unwrap();
-    let data = dw.expect_len_mut("packet");
+    info!("header written! {} ({} free)", total - cursor.len(), cursor.len());
+    let data = data.to_unsized_bytes(&mut cursor);
+    info!("unencrypted data: ({} bytes) {:02x}", data.len(), data);
     if let Some(data) = try_encode_ctr(data, header, Key::Key128(&DEFAULT_PSK)) {
+        info!("encrypted data: ({} bytes) {:02x}", data.len(), data);
         len += data.len();
+        info!("final packet len = {}", len);
         Some(&mut buffer[..len])
     } else {
         None

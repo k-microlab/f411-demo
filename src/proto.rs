@@ -39,8 +39,14 @@ impl<'buffer> Wire<'buffer> {
         match self {
             Wire::VarInt(v) => crate::varint::len_of(*v),
             Wire::Fixed64(_) => 8,
-            Wire::Len(x) => crate::varint::len_of(x.wire_len() as i32) + x.wire_len(),
-            Wire::LenMut(x) => crate::varint::len_of(x.as_ref().wire_len() as i32) + x.as_ref().wire_len(),
+            Wire::Len(x) => {
+                let len = x.len();
+                crate::varint::len_of(len as i32) + len
+            },
+            Wire::LenMut(x) => {
+                let len = x.len();
+                crate::varint::len_of(len as i32) + len
+            },
             Wire::Fixed32(_) => 4,
         }
     }
@@ -60,11 +66,11 @@ impl<'buffer> Wire<'buffer> {
             Wire::VarInt(x) => cursor.write_var_i32(*x),
             Wire::Fixed64(x) => cursor.write_u64_le(*x),
             Wire::Len(buf) => {
-                cursor.write_var_i32(buf.wire_len() as i32);
+                cursor.write_var_i32(buf.len() as i32);
                 cursor.write_bytes(buf);
             }
             Wire::LenMut(buf) => {
-                cursor.write_var_i32(buf.as_ref().wire_len() as i32);
+                cursor.write_var_i32(buf.len() as i32);
                 cursor.write_bytes(buf);
             }
             Wire::Fixed32(x) => cursor.write_u32_le(*x),
@@ -186,6 +192,10 @@ pub trait FromWire<'a>: Default + Sized {
 }
 
 pub trait ToWire<'a>: Default + Sized {
+    fn to_unsized_bytes(&self, cursor: &mut Cursor<&'a mut [u8]>) -> &'a mut [u8] {
+        unimplemented!()
+    }
+
     fn to_wire(&self, cursor: &mut Cursor<&'a mut [u8]>) -> Option<Wire<'a>>;
 
     fn wire_len(&self) -> usize;
@@ -271,10 +281,12 @@ impl<'a> ToWire<'a> for &'a [u8] {
     }
 
     fn wire_len(&self) -> usize {
-        if self.len() == 0 {
-            return 0;
+        let len = self.len();
+        if len > 0 {
+            crate::varint::len_of(self.len() as i32) + len
+        } else {
+            0
         }
-        crate::varint::len_of(self.len() as i32) + self.len()
     }
 }
 
@@ -305,17 +317,30 @@ macro_rules! proto {
         }
 
         impl<'a> crate::proto::ToWire<'a> for $name $(<$lt>)? {
+            fn to_unsized_bytes(&self, cursor: &mut crate::cursor::Cursor<&'a mut [u8]>) -> &'a mut [u8] {
+                let len = self.wire_len();
+                let payload = cursor.take_slice_mut(len);
+                let mut cur = crate::cursor::Cursor::<&mut [u8]>::new(&mut *payload);
+                $({
+                    if let Some(wire) = self.$field.to_wire(cursor) {
+                        defmt::info!("writing wire #{}: {} = {} ({})", $id, stringify!($field), self.$field, wire);
+                        cur.write_wire($id, wire);
+                    }
+                })*
+                payload
+            }
+
             fn to_wire(&self, cursor: &mut crate::cursor::Cursor<&'a mut [u8]>) -> Option<crate::proto::Wire<'a>> {
                 use crate::varint::VarIntWrite;
 
-                let len = self.wire_len();
+                let mut len = self.wire_len();
+                len += crate::varint::len_of(len as i32);
                 let payload = cursor.take_slice_mut(len);
-                defmt::info!("len is {} buffer capacity is {}", len, payload.len());
                 let mut cur = crate::cursor::Cursor::<&mut [u8]>::new(&mut *payload);
                 cur.write_var_i32(len as i32);
                 $({
                     if let Some(wire) = self.$field.to_wire(cursor) {
-                        defmt::info!("writing wire #{}: {} ({})", $id, stringify!($field), wire);
+                        defmt::info!("writing wire #{}: {} = {} ({})", $id, stringify!($field), self.$field, wire);
                         cur.write_wire($id, wire);
                     }
                 })*
@@ -326,13 +351,13 @@ macro_rules! proto {
                 let mut len = 0;
                 $({
                     let l = self.$field.wire_len();
-                    len += l;
                     if l > 0 {
+                        len += l;
                         len += 1; // TAG
                     }
                 })*
-                defmt::info!("len of varint says {} + {}", crate::varint::len_of(len as i32), len);
-                crate::varint::len_of(len as i32) + len
+                defmt::info!("wire_len of {}: {}", stringify!($name), len);
+                len
             }
         }
     };
