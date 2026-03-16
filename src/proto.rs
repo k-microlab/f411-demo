@@ -249,6 +249,22 @@ impl<'a> ToWire<'a> for v32 {
     }
 }
 
+impl<'a> FromWire<'a> for f32 {
+    fn from_wire(wire: Wire<'a>, field: &'static str) -> Self {
+        f32::from_bits(wire.expect_fixed32(field))
+    }
+}
+
+impl<'a> ToWire<'a> for f32 {
+    fn to_wire(&self, cursor: &mut Cursor<&'a mut [u8]>) -> Option<Wire<'a>> {
+        if *self == 0.0 { None } else { Some(Wire::Fixed32(self.to_bits())) }
+    }
+
+    fn wire_len(&self) -> usize {
+        if *self != 0.0 { 4 } else { 0 }
+    }
+}
+
 impl<'a, T> FromWire<'a> for Option<T> where T: FromWire<'a> {
     fn from_wire(wire: Wire<'a>, field: &'static str) -> Self {
         Some(T::from_wire(wire, field))
@@ -278,6 +294,22 @@ impl<'a> ToWire<'a> for u64 {
 
     fn wire_len(&self) -> usize {
         if *self == 0 { 0 } else { 8 }
+    }
+}
+
+impl<'a> FromWire<'a> for f64 {
+    fn from_wire(wire: Wire<'a>, field: &'static str) -> Self {
+        f64::from_bits(wire.expect_fixed64(field))
+    }
+}
+
+impl<'a> ToWire<'a> for f64 {
+    fn to_wire(&self, cursor: &mut Cursor<&'a mut [u8]>) -> Option<Wire<'a>> {
+        if *self == 0.0 { None } else { Some(Wire::Fixed64(self.to_bits())) }
+    }
+
+    fn wire_len(&self) -> usize {
+        if *self != 0.0 { 8 } else { 0 }
     }
 }
 
@@ -320,6 +352,27 @@ impl<'a> ToWire<'a> for &'a str {
     fn wire_len(&self) -> usize {
         self.as_bytes().wire_len()
     }
+}
+
+#[macro_export]
+macro_rules! ordinal {
+    ($name:ident) => {
+        impl<'a> $crate::proto::FromWire<'a> for $name {
+            fn from_wire(wire: $crate::proto::Wire<'a>, field: &'static str) -> Self {
+                Self::from_i32(wire.expect_var_int(field)).expect("unknown enum variant")
+            }
+        }
+
+        impl<'a> $crate::proto::ToWire<'a> for $name {
+            fn to_wire(&self, _cursor: &mut $crate::cursor::Cursor<&'a mut [u8]>) -> Option<$crate::proto::Wire<'a>> {
+                if *self == Self::default() { None } else { Some(Wire::VarInt(*self as i32)) }
+            }
+
+            fn wire_len(&self) -> usize {
+                if *self == Self::default() { 0 } else { $crate::varint::len_of(*self as i32) }
+            }
+        }
+    };
 }
 
 #[macro_export]
