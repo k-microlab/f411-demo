@@ -89,7 +89,7 @@ impl<'buffer> Wire<'buffer> {
         if let Wire::VarInt(x) = self {
             x
         } else {
-            defmt::panic!("expected wire `{}` to be VarInt", field);
+            defmt::panic!("expected wire `{}` to be VarInt, was {}", field, self);
         }
     }
 
@@ -105,7 +105,7 @@ impl<'buffer> Wire<'buffer> {
         if let Wire::Fixed64(x) = self {
             x
         } else {
-            defmt::panic!("expected wire `{}` to be Fixed64", field);
+            defmt::panic!("expected wire `{}` to be Fixed64, was {}", field, self);
         }
     }
 
@@ -125,7 +125,7 @@ impl<'buffer> Wire<'buffer> {
         } else if let Wire::LenMut(x) = self {
             x
         } else {
-            defmt::panic!("expected wire `{}` to be Len", field);
+            defmt::panic!("expected wire `{}` to be Len, was {}", field, self);
         }
     }
 
@@ -141,7 +141,7 @@ impl<'buffer> Wire<'buffer> {
         if let Wire::LenMut(x) = self {
             x
         } else {
-            defmt::panic!("expected wire `{}` to be LenMut", field);
+            defmt::panic!("expected wire `{}` to be LenMut, was {}", field, self);
         }
     }
 
@@ -157,7 +157,7 @@ impl<'buffer> Wire<'buffer> {
         if let Wire::Fixed32(x) = self {
             x
         } else {
-            defmt::panic!("expected wire `{}` to be Fixed32", field);
+            defmt::panic!("expected wire `{}` to be Fixed32, was {}", field, self);
         }
     }
 }
