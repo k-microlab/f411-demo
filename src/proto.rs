@@ -188,11 +188,15 @@ impl<'a> WriteWire<'a> for Cursor<&'a mut [u8]> {
 }
 
 pub trait FromWire<'a>: Default + Sized {
+    fn from_payload(payload: &'a [u8]) -> Self {
+        Self::from_wire(Wire::Len(payload), "payload")
+    }
+
     fn from_wire(wire: Wire<'a>, field: &'static str) -> Self;
 }
 
 pub trait ToWire<'a>: Default + Sized {
-    fn to_unsized_bytes(&self, cursor: &mut Cursor<&'a mut [u8]>) -> &'a mut [u8] {
+    fn to_payload(&self, cursor: &mut Cursor<&'a mut [u8]>) -> &'a mut [u8] {
         unimplemented!()
     }
 
@@ -404,7 +408,7 @@ macro_rules! proto {
 
         impl<'a> crate::proto::ToWire<'a> for $name $(<$lt>)? {
             #[allow(deprecated)]
-            fn to_unsized_bytes(&self, cursor: &mut crate::cursor::Cursor<&'a mut [u8]>) -> &'a mut [u8] {
+            fn to_payload(&self, cursor: &mut crate::cursor::Cursor<&'a mut [u8]>) -> &'a mut [u8] {
                 let len = self.wire_len();
                 let payload = cursor.take_slice_mut(len);
                 let mut cur = crate::cursor::Cursor::<&mut [u8]>::new(&mut *payload);

@@ -140,7 +140,7 @@ async fn main(spawner: Spawner) {
                         }
                     }
                     PortNum::NodeInfoApp => {
-                        let user = User::from_wire(Wire::Len(data.payload), "payload");
+                        let user = User::from_payload(data.payload);
                         info!("node info: {}", user);
                     }
                     _ => {}
@@ -273,7 +273,7 @@ fn try_decode<'buffer, 'key>(data: &'buffer mut [u8], key: Key<'key>, out: &'buf
 
         // CCM used only for personal messages
         if !header.is_broadcast() && let Some(packet) = try_decode_ccm(data, &header, key, out) {
-            return Some((header, Data::from_wire(Wire::Len(packet), "packet")));
+            return Some((header, Data::from_payload(packet)));
         }
     }
 
@@ -284,7 +284,7 @@ fn try_decode<'buffer, 'key>(data: &'buffer mut [u8], key: Key<'key>, out: &'buf
 
     if let Some(packet) = try_decode_ctr(data, &header, Key::Key128(&DEFAULT_PSK)) {
         info!("decoded bytes: {:02x}", packet);
-        return Some((header, Data::from_wire(Wire::Len(packet), "packet")));
+        return Some((header, Data::from_payload(packet)));
     }
 
     None
@@ -317,7 +317,7 @@ fn try_encode<'buffer, 'key>(buffer: &'buffer mut [u8], data: &Data<'buffer>, he
     header.write(&mut cursor);
     len += total - cursor.len();
     info!("header written! {} ({} free)", total - cursor.len(), cursor.len());
-    let data = data.to_unsized_bytes(&mut cursor);
+    let data = data.to_payload(&mut cursor);
     info!("unencrypted data: ({} bytes) {:02x}", data.len(), data);
     if let Some(data) = try_encode_ctr(data, header, Key::Key128(&DEFAULT_PSK)) {
         info!("encrypted data: ({} bytes) {:02x}", data.len(), data);
