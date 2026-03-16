@@ -306,6 +306,22 @@ impl<'a> ToWire<'a> for &'a [u8] {
     }
 }
 
+impl<'a> FromWire<'a> for &'a str {
+    fn from_wire(wire: Wire<'a>, field: &'static str) -> Self {
+        core::str::from_utf8(wire.expect_len(field)).expect("invalid UTF-8 sequence")
+    }
+}
+
+impl<'a> ToWire<'a> for &'a str {
+    fn to_wire(&self, cursor: &mut Cursor<&'a mut [u8]>) -> Option<Wire<'a>> {
+        self.as_bytes().to_wire(cursor)
+    }
+
+    fn wire_len(&self) -> usize {
+        self.as_bytes().wire_len()
+    }
+}
+
 #[macro_export]
 macro_rules! proto {
     ($sv:vis struct $name:ident $(<$lt:lifetime>)? {
