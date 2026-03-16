@@ -16,7 +16,7 @@ use embassy_stm32::gpio::{Input, Level, Output, Pull, Speed};
 use embassy_stm32::{bind_interrupts, exti, interrupt};
 
 use {defmt_rtt as _, panic_probe as _};
-use crate::meshtastic::{Data, MestasticHeader, NodeId, Nonce, PacketFlags, PortNum};
+use crate::meshtastic::{Data, MestasticHeader, NodeId, Nonce, PacketFlags, PortNum, User};
 use crate::radio::{LoraBandwidth, LoraCodingRate, LoraHeaderType, LoraSpreadingFactor, OutputPower, Radio, RadioConfig, RampTime};
 
 type Aes128Ctr = ctr::Ctr32BE<aes::Aes128>;
@@ -133,8 +133,17 @@ async fn main(spawner: Spawner) {
             if let Some((header, data)) = try_decode(data, Key::Key256(&shared_key), &mut out) {
                 info!("data: {}", data);
 
-                if data.port_num == PortNum::TextMessageApp && let Some(text) = core::str::from_utf8(data.payload).ok() {
-                    info!("text message: '{}'", text);
+                match data.port_num {
+                    PortNum::TextMessageApp => {
+                        if let Some(text) = core::str::from_utf8(data.payload).ok() {
+                            info!("text message: '{}'", text);
+                        }
+                    }
+                    PortNum::NodeInfoApp => {
+                        let user = User::from_wire(Wire::Len(data.payload), "payload");
+                        info!("node info: {}", user);
+                    }
+                    _ => {}
                 }
             }
         }
