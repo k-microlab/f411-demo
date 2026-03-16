@@ -5,6 +5,7 @@ use num_traits::FromPrimitive;
 use crate::cursor::Cursor;
 use crate::proto;
 use crate::proto::{ReadWire, WriteWire, Wire, FromWire, ToWire};
+use crate::varint::v32;
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(transparent)]
@@ -193,6 +194,6 @@ proto! {
         pub request_id: u32 = 6,
         pub reply_id: u32 = 7,
         pub emoji: u32 = 8,
-        pub bitfield: Option<u32> = 9,
+        pub bitfield: Option<v32> = 9,
     }
 }

@@ -1,5 +1,22 @@
 use crate::cursor::Cursor;
 
+#[allow(non_camel_case_types)]
+#[derive(Default)]
+#[repr(transparent)]
+pub struct v32(pub u32);
+
+impl From<u32> for v32 {
+    fn from(value: u32) -> Self {
+        Self(value)
+    }
+}
+
+impl defmt::Format for v32 {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(fmt, "{}", self.0);
+    }
+}
+
 pub trait VarIntRead {
     fn read_var_i32(&mut self) -> i32;
 }

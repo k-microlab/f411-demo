@@ -2,7 +2,7 @@ use defmt::Format;
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
 use crate::cursor::Cursor;
-use crate::varint::{VarIntRead, VarIntWrite};
+use crate::varint::{v32, VarIntRead, VarIntWrite};
 
 #[repr(u8)]
 #[derive(FromPrimitive, Format)]
@@ -233,19 +233,35 @@ impl<'a> ToWire<'a> for u32 {
     }
 }
 
-impl<'a> FromWire<'a> for Option<u32> {
+impl<'a> FromWire<'a> for v32 {
     fn from_wire(wire: Wire<'a>, field: &'static str) -> Self {
-        Some(wire.expect_var_int(field) as u32)
+        v32(wire.expect_var_int(field) as u32)
     }
 }
 
-impl<'a> ToWire<'a> for Option<u32> {
+impl<'a> ToWire<'a> for v32 {
     fn to_wire(&self, cursor: &mut Cursor<&'a mut [u8]>) -> Option<Wire<'a>> {
-        self.clone().map(|wire| Wire::VarInt(wire as i32))
+        if self.0 == 0 { None } else { Some(Wire::VarInt(self.0 as i32)) }
     }
 
     fn wire_len(&self) -> usize {
-        if let Some(x) = *self { crate::varint::len_of(x as i32) } else { 0 }
+        if self.0 > 0 { crate::varint::len_of(self.0 as i32) } else { 0 }
+    }
+}
+
+impl<'a, T> FromWire<'a> for Option<T> where T: FromWire<'a> {
+    fn from_wire(wire: Wire<'a>, field: &'static str) -> Self {
+        Some(T::from_wire(wire, field))
+    }
+}
+
+impl<'a, T> ToWire<'a> for Option<T> where T: ToWire<'a> {
+    fn to_wire(&self, cursor: &mut Cursor<&'a mut [u8]>) -> Option<Wire<'a>> {
+        self.as_ref().map(|value| T::to_wire(value, cursor)).flatten()
+    }
+
+    fn wire_len(&self) -> usize {
+        if let Some(x) = self { T::wire_len(x) } else { 0 }
     }
 }
 
