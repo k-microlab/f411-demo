@@ -1,5 +1,4 @@
 use bitfield::bitfield;
-use byteorder::LittleEndian;
 use defmt::{info, Format, Formatter};
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
@@ -42,9 +41,9 @@ pub struct MestasticHeader {
 impl MestasticHeader {
     pub fn read(cursor: &mut Cursor<&mut [u8]>) -> Self {
         Self {
-            to: NodeId(cursor.read_u32::<LittleEndian>()),
-            from: NodeId(cursor.read_u32::<LittleEndian>()),
-            packet_id: cursor.read_u32::<LittleEndian>(),
+            to: NodeId(cursor.read_u32_le()),
+            from: NodeId(cursor.read_u32_le()),
+            packet_id: cursor.read_u32_le(),
             flags: PacketFlags(cursor.read_u8()),
             channel: cursor.read_u8(),
             next_hop: cursor.read_u8(),
@@ -53,9 +52,9 @@ impl MestasticHeader {
     }
 
     pub fn write(&self, cursor: &mut Cursor<&mut [u8]>) {
-        cursor.write_u32::<LittleEndian>(self.to.0);
-        cursor.write_u32::<LittleEndian>(self.from.0);
-        cursor.write_u32::<LittleEndian>(self.packet_id);
+        cursor.write_u32_le(self.to.0);
+        cursor.write_u32_le(self.from.0);
+        cursor.write_u32_le(self.packet_id);
         cursor.write_u8(self.flags.0);
         cursor.write_u8(self.channel);
         cursor.write_u8(self.next_hop);

@@ -1,4 +1,3 @@
-use byteorder::LittleEndian;
 use defmt::Format;
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
@@ -27,12 +26,12 @@ impl<'buffer> Wire<'buffer> {
     pub fn read<'cursor>(cursor: &'cursor mut Cursor<&'buffer [u8]>, ty: WireType) -> Wire<'buffer> where 'buffer: 'cursor {
         match ty {
             WireType::VarInt => Wire::VarInt(cursor.read_var_i32()),
-            WireType::Fixed64 => Wire::Fixed64(cursor.read_u64::<LittleEndian>()),
+            WireType::Fixed64 => Wire::Fixed64(cursor.read_u64_le()),
             WireType::Len => {
                 let len = cursor.read_var_i32() as usize;
                 Wire::Len(cursor.take_slice(len))
             }
-            WireType::Fixed32 => Wire::Fixed32(cursor.read_u32::<LittleEndian>()),
+            WireType::Fixed32 => Wire::Fixed32(cursor.read_u32_le()),
         }
     }
 
@@ -59,7 +58,7 @@ impl<'buffer> Wire<'buffer> {
     pub fn write(&self, cursor: &mut Cursor<&'buffer mut [u8]>) {
         match self {
             Wire::VarInt(x) => cursor.write_var_i32(*x),
-            Wire::Fixed64(x) => cursor.write_u64::<LittleEndian>(*x),
+            Wire::Fixed64(x) => cursor.write_u64_le(*x),
             Wire::Len(buf) => {
                 cursor.write_var_i32(buf.wire_len() as i32);
                 cursor.write_bytes(buf);
@@ -68,7 +67,7 @@ impl<'buffer> Wire<'buffer> {
                 cursor.write_var_i32(buf.as_ref().wire_len() as i32);
                 cursor.write_bytes(buf);
             }
-            Wire::Fixed32(x) => cursor.write_u32::<LittleEndian>(*x),
+            Wire::Fixed32(x) => cursor.write_u32_le(*x),
         }
     }
 

@@ -1,10 +1,10 @@
 use core::{fmt::Debug, prelude::rust_2021::derive};
 use core::ops::{Deref, DerefMut};
-use byteorder::ByteOrder;
 
 /// A std::io::Cursor like buffer interface with byteorder support and no_std
 /// compatibility.
 #[derive(Debug)]
+#[repr(transparent)]
 pub struct Cursor<T> {
     buffer: T,
 }
@@ -35,6 +35,14 @@ impl<'buffer> Cursor<&'buffer [u8]> {
         self.buffer
     }
 
+    pub fn split_off_chunk<'this, 'slice, const N: usize>(&'this mut self) -> &'slice [u8; N] where 'buffer: 'slice {
+        let len = self.buffer.len();
+        assert!(len >= N, "buffer underflow");
+        let ptr = self.buffer.as_ptr();
+        self.buffer = unsafe { core::slice::from_raw_parts(ptr.add(len), len - N) };
+        unsafe { &*(ptr as *const [u8; N]) }
+    }
+
     pub fn take_slice<'this, 'slice>(&'this mut self, len: usize) -> &'slice [u8] where 'buffer: 'slice {
         self.buffer.split_off(..len).expect("buffer underflow")
     }
@@ -56,61 +64,49 @@ impl<'buffer> Cursor<&'buffer [u8]> {
     /// Reads a 16bit integer value from the underlying buffer and advances
     /// cursor position.
     /// Panics if there is not enough data remaining.
-    pub fn read_u16<B: ByteOrder>(&mut self) -> u16 {
-        let bytes = self.buffer.split_off(..2).expect("buffer underflow");
-        B::read_u16(bytes)
+    pub fn read_u16_be(&mut self) -> u16 {
+        let bytes = self.split_off_chunk::<2>();
+        u16::from_be_bytes(*bytes)
     }
 
-    /// Reads a 24bit integer value from the underlying buffer and advances
+    /// Reads a 16bit integer value from the underlying buffer and advances
     /// cursor position.
     /// Panics if there is not enough data remaining.
-    pub fn read_u24<B: ByteOrder>(&mut self) -> u32 {
-        let bytes = self.buffer.split_off(..3).expect("buffer underflow");
-        B::read_u24(bytes)
+    pub fn read_u16_le(&mut self) -> u16 {
+        let bytes = self.split_off_chunk::<2>();
+        u16::from_le_bytes(*bytes)
     }
 
     /// Reads a 32bit integer value from the underlying buffer and advances
     /// cursor position.
     /// Panics if there is not enough data remaining.
-    pub fn read_u32<B: ByteOrder>(&mut self) -> u32 {
-        let bytes = self.buffer.split_off(..4).expect("buffer underflow");
-        B::read_u32(bytes)
+    pub fn read_u32_be(&mut self) -> u32 {
+        let bytes = self.split_off_chunk::<4>();
+        u32::from_be_bytes(*bytes)
+    }
+
+    /// Reads a 32bit integer value from the underlying buffer and advances
+    /// cursor position.
+    /// Panics if there is not enough data remaining.
+    pub fn read_u32_le(&mut self) -> u32 {
+        let bytes = self.split_off_chunk::<4>();
+        u32::from_le_bytes(*bytes)
     }
 
     /// Reads a 64bit integer value from the underlying buffer and advances
     /// cursor position.
     /// Panics if there is not enough data remaining.
-    pub fn read_u64<B: ByteOrder>(&mut self) -> u64 {
-        let bytes = self.buffer.split_off(..8).expect("buffer underflow");
-        B::read_u64(bytes)
+    pub fn read_u64_be(&mut self) -> u64 {
+        let bytes = self.split_off_chunk::<8>();
+        u64::from_be_bytes(*bytes)
     }
 
-    /// Reads a 8bit integer value from the underlying buffer at a given
-    /// offset from the cursor position without advancing the cursor position.
+    /// Reads a 64bit integer value from the underlying buffer and advances
+    /// cursor position.
     /// Panics if there is not enough data remaining.
-    pub fn peek_u8(&self, offset: usize) -> u8 {
-        *self.buffer.get(offset).expect("buffer underflow")
-    }
-
-    /// Reads a 16bit integer value from the underlying buffer at a given
-    /// offset from the cursor position without advancing the cursor position.
-    /// Panics if there is not enough data remaining.
-    pub fn peek_u16<B: ByteOrder>(&self, offset: usize) -> u16 {
-        B::read_u16(&self.buffer[offset..])
-    }
-
-    /// Reads a 24bit integer value from the underlying buffer at a given
-    /// offset from the cursor position without advancing the cursor position.
-    /// Panics if there is not enough data remaining.
-    pub fn peek_u24<B: ByteOrder>(&self, offset: usize) -> u32 {
-        B::read_u24(&self.buffer[offset..])
-    }
-
-    /// Reads a 32bit integer value from the underlying buffer at a given
-    /// offset from the cursor position without advancing the cursor position.
-    /// Panics if there is not enough data remaining.
-    pub fn peek_u32<B: ByteOrder>(&self, offset: usize) -> u32 {
-        B::read_u32(&self.buffer[offset..])
+    pub fn read_u64_le(&mut self) -> u64 {
+        let bytes = self.split_off_chunk::<8>();
+        u64::from_le_bytes(*bytes)
     }
 }
 
@@ -150,6 +146,14 @@ impl<'buffer> Cursor<&'buffer mut [u8]> {
         self.buffer
     }
 
+    pub fn split_off_chunk_mut<'this, 'slice, const N: usize>(&'this mut self) -> &'slice mut [u8; N] where 'buffer: 'slice {
+        let len = self.buffer.len();
+        assert!(len >= N, "buffer overflow");
+        let ptr = self.buffer.as_mut_ptr();
+        self.buffer = unsafe { core::slice::from_raw_parts_mut(ptr.add(len), len - N) };
+        unsafe { &mut *(ptr as *mut [u8; N]) }
+    }
+
     pub fn take_slice_mut(&mut self, len: usize) -> &'buffer mut [u8] {
         self.buffer.split_off_mut(..len).expect("buffer overflow")
     }
@@ -173,32 +177,48 @@ impl<'buffer> Cursor<&'buffer mut [u8]> {
     /// Writes a 16bit integer value to the underlying buffer and advances
     /// cursor position.
     /// Panics if there is not enough space remaining.
-    pub fn write_u16<B: ByteOrder>(&mut self, val: u16) {
-        let bytes = self.buffer.split_off_mut(..2).expect("buffer overflow");
-        B::write_u16(bytes, val);
+    pub fn write_u16_be(&mut self, val: u16) {
+        let bytes = self.split_off_chunk_mut::<2>();
+        *bytes = u16::to_be_bytes(val);
     }
 
-    /// Writes a 24bit integer value to the underlying buffer and advances
+    /// Writes a 16bit integer value to the underlying buffer and advances
     /// cursor position.
     /// Panics if there is not enough space remaining.
-    pub fn write_u24<B: ByteOrder>(&mut self, val: u32) {
-        let bytes = self.buffer.split_off_mut(..3).expect("buffer overflow");
-        B::write_u24(bytes, val);
+    pub fn write_u16_le(&mut self, val: u16) {
+        let bytes = self.split_off_chunk_mut::<2>();
+        *bytes = u16::to_le_bytes(val);
     }
 
     /// Writes a 32bit integer value to the underlying buffer and advances
     /// cursor position.
     /// Panics if there is not enough space remaining.
-    pub fn write_u32<B: ByteOrder>(&mut self, val: u32) {
-        let bytes = self.buffer.split_off_mut(..4).expect("buffer overflow");
-        B::write_u32(bytes, val);
+    pub fn write_u32_be(&mut self, val: u32) {
+        let bytes = self.split_off_chunk_mut::<4>();
+        *bytes = u32::to_be_bytes(val);
+    }
+
+    /// Writes a 32bit integer value to the underlying buffer and advances
+    /// cursor position.
+    /// Panics if there is not enough space remaining.
+    pub fn write_u32_le(&mut self, val: u32) {
+        let bytes = self.split_off_chunk_mut::<4>();
+        *bytes = u32::to_le_bytes(val);
     }
 
     /// Writes a 64bit integer value to the underlying buffer and advances
     /// cursor position.
     /// Panics if there is not enough space remaining.
-    pub fn write_u64<B: ByteOrder>(&mut self, val: u64) {
-        let bytes = self.buffer.split_off_mut(..8).expect("buffer overflow");
-        B::write_u64(bytes, val);
+    pub fn write_u64_be(&mut self, val: u64) {
+        let bytes = self.split_off_chunk_mut::<8>();
+        *bytes = u64::to_be_bytes(val);
+    }
+
+    /// Writes a 64bit integer value to the underlying buffer and advances
+    /// cursor position.
+    /// Panics if there is not enough space remaining.
+    pub fn write_u64_le(&mut self, val: u64) {
+        let bytes = self.split_off_chunk_mut::<8>();
+        *bytes = u64::to_le_bytes(val);
     }
 }
