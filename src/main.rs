@@ -242,13 +242,9 @@ fn try_encode<'buffer, 'key>(buffer: &'buffer mut [u8], data: &Data<'buffer>, he
     let mut cursor = Cursor::<&mut [u8]>::new(&mut *buffer);
     header.write(&mut cursor);
     len += total - cursor.len();
-    info!("header written! {} ({} free)", total - cursor.len(), cursor.len());
     let data = data.to_payload(&mut cursor);
-    info!("unencrypted data: ({} bytes) {:02x}", data.len(), data);
     if let Some(data) = try_encode_ctr(data, header, Key::Key128(&DEFAULT_PSK)) {
-        info!("encrypted data: ({} bytes) {:02x}", data.len(), data);
         len += data.len();
-        info!("final packet len = {}", len);
         Some(&mut buffer[..len])
     } else {
         None
