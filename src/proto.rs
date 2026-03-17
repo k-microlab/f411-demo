@@ -237,6 +237,22 @@ impl<'a> ToWire<'a> for u32 {
     }
 }
 
+impl<'a> FromWire<'a> for i32 {
+    fn from_wire(wire: Wire<'a>, field: &'static str) -> Self {
+        wire.expect_fixed32(field) as i32
+    }
+}
+
+impl<'a> ToWire<'a> for i32 {
+    fn to_wire(&self, cursor: &mut Cursor<&'a mut [u8]>) -> Option<Wire<'a>> {
+        if *self == 0 { None } else { Some(Wire::Fixed32(self.cast_unsigned())) }
+    }
+
+    fn wire_len(&self) -> usize {
+        if *self == 0 { 0 } else { 4 }
+    }
+}
+
 impl<'a> FromWire<'a> for v32 {
     fn from_wire(wire: Wire<'a>, field: &'static str) -> Self {
         v32(wire.expect_var_int(field) as u32)
