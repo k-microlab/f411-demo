@@ -430,7 +430,7 @@ macro_rules! proto {
                 let mut cur = crate::cursor::Cursor::<&mut [u8]>::new(&mut *payload);
                 $({
                     if let Some(wire) = self.$field.to_wire(cursor) {
-                        defmt::info!("writing wire #{}: {} = {} ({})", $id, stringify!($field), self.$field, wire);
+                        defmt::trace!("writing wire #{}: {} = {} ({})", $id, stringify!($field), self.$field, wire);
                         cur.write_wire($id, wire);
                     }
                 })*
@@ -448,7 +448,7 @@ macro_rules! proto {
                 cur.write_var_i32(len as i32);
                 $({
                     if let Some(wire) = self.$field.to_wire(cursor) {
-                        defmt::info!("writing wire #{}: {} = {} ({})", $id, stringify!($field), self.$field, wire);
+                        defmt::trace!("writing wire #{}: {} = {} ({})", $id, stringify!($field), self.$field, wire);
                         cur.write_wire($id, wire);
                     }
                 })*
@@ -465,7 +465,7 @@ macro_rules! proto {
                         len += 1; // TAG
                     }
                 })*
-                defmt::info!("wire_len of {}: {}", stringify!($name), len);
+                defmt::trace!("wire_len of {}: {}", stringify!($name), len);
                 len
             }
         }

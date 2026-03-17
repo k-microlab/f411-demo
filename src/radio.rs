@@ -1,4 +1,4 @@
-use defmt::{bitflags, info, warn, Format};
+use defmt::{bitflags, error, info, warn, Format};
 use embassy_stm32::exti::ExtiInput;
 use embassy_stm32::gpio::{Input, Output};
 use embassy_stm32::mode::Async;
@@ -450,7 +450,7 @@ impl<'a> Radio<'a> {
             }*/
 
             if irq.contains(Irq::HEADER_ERROR) {
-                info!("{}", irq);
+                error!("{}", irq);
                 self.set_standby(Standby::Rc).await?;
                 return Ok(0);
             }
@@ -465,7 +465,7 @@ impl<'a> Radio<'a> {
 
             if cs == CommandStatus::DataAvailable {
                 if irq.contains(Irq::HEADER_ERROR) || irq.contains(Irq::CRC_ERROR) {
-                    warn!("HEADER/CRC error!");
+                    error!("HEADER/CRC error!");
                     return Ok(0);
                 }
             }
@@ -476,14 +476,14 @@ impl<'a> Radio<'a> {
             } else {
                 size as usize
             };
-            info!("size = {}, offset = {}", size, offset);
+            defmt::trace!("size = {}, offset = {}", size, offset);
 
             self.set_standby(Standby::Rc).await?;
             self.implicit_header_to_workaround().await?;
 
             let device_errors = self.read_op::<u16>(OpCode::GetDeviceErrors).await?;
             if device_errors != 0 {
-                warn!("device error: {}", device_errors);
+                error!("device error: {}", device_errors);
             }
 
             // info!("IRQ: {}", irq);

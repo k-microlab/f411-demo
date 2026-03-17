@@ -14,7 +14,7 @@ use embassy_stm32::adc::{Adc, SampleTime};
 use rand_chacha::rand_core::{Rng, SeedableRng};
 use {defmt_rtt as _, panic_probe as _};
 use crate::crypto::aes::Key;
-use crate::meshtastic::{Data, MestasticHeader, NodeId, Nonce, PacketFlags, PortNum, Position, User};
+use crate::meshtastic::{Data, DeviceRole, HardwareModel, MestasticHeader, NodeId, Nonce, PacketFlags, PortNum, Position, User};
 use crate::radio::{LoraBandwidth, LoraCodingRate, LoraHeaderType, LoraSpreadingFactor, OutputPower, Radio, RadioConfig, RampTime};
 
 extern crate alloc;
@@ -120,24 +120,41 @@ async fn main(spawner: Spawner) {
         }
     }
 
+    let mut buffer = [0; 255];
+    let info = User {
+        id: "0304",
+        long_name: "Meshtastic 0304",
+        short_name: "0304",
+        macaddr: &[],
+        hw_model: HardwareModel::RpiPico,
+        is_licensed: false,
+        role: DeviceRole::Client,
+        public_key: &PUB,
+        is_unmessagable: None,
+    };
+    let payload = info.to_payload(&mut Cursor::<&mut [u8]>::new(&mut buffer));
+
     send_packet(&mut radio, &Data {
-        port_num: PortNum::TextMessageApp,
-        payload: b"Hello from faketastic!",
+        port_num: PortNum::NodeInfoApp,
+        payload,
         want_response: true,
         .. Default::default()
     }, None, &mut packet_id, &mut rng).await;
 
     let shared_key = crypto::sha::hash_256(&diffie_hellman(&PRIV, &PUB));
-    let mut buffer = [0; 255];
+
     loop {
         buffer.fill(0);
         let size = radio.receive(&mut buffer, None, true).await.unwrap();
         if size > 0 {
             let data = &mut buffer[..size];
-            info!("Received bytes: {:02x}", data);
+            trace!("Received bytes: {:02x}", data);
             let mut out = ArrayVec::<u8, 256>::new();
             if let Some((header, data)) = try_decode(data, Key::Key256(&shared_key), &mut out) {
-                info!("data: {}", data);
+                if header.flags.get_hop_limit() < HOP_LIMIT && header.from == NODE_ID {
+                    info!("Someone retranslated our {} message on channel {}", data.port_num, header.channel);
+                    continue;
+                }
 
                 match data.port_num {
                     PortNum::TextMessageApp => {
@@ -153,7 +170,9 @@ async fn main(spawner: Spawner) {
                         let pos = Position::from_payload(data.payload);
                         info!("position: {}", pos);
                     }
-                    _ => {}
+                    _ => {
+                        info!("data: {}", data);
+                    }
                 }
             }
         }
@@ -195,7 +214,7 @@ fn try_decode<'buffer, 'key>(data: &'buffer mut [u8], key: Key<'key>, out: &'buf
 
     {
         info!("recv: {}", header);
-        info!("payload is {} bytes: {:02x}", data.len(), data);
+        defmt::trace!("payload is {} bytes: {:02x}", data.len(), data);
 
         // CCM used only for personal messages
         if !header.is_broadcast() && let Some(packet) = try_decode_ccm(data, &header, key, out) {
@@ -209,7 +228,7 @@ fn try_decode<'buffer, 'key>(data: &'buffer mut [u8], key: Key<'key>, out: &'buf
     };
 
     if let Some(packet) = try_decode_ctr(data, &header, Key::Key128(&DEFAULT_PSK)) {
-        info!("decoded bytes: {:02x}", packet);
+        defmt::trace!("decoded bytes: {:02x}", packet);
         return Some((header, Data::from_payload(packet)));
     }
 
