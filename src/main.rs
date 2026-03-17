@@ -17,6 +17,8 @@ use crate::crypto::aes::Key;
 use crate::meshtastic::{Data, MestasticHeader, NodeId, Nonce, PacketFlags, PortNum, Position, User};
 use crate::radio::{LoraBandwidth, LoraCodingRate, LoraHeaderType, LoraSpreadingFactor, OutputPower, Radio, RadioConfig, RampTime};
 
+extern crate alloc;
+
 const ID_COUNTER_MASK: u32 = u32::MAX >> 22;
 
 const NODE_ID: NodeId = NodeId(0x01020304);
@@ -41,10 +43,22 @@ pub mod proto;
 pub mod meshtastic;
 
 use crate::cursor::Cursor;
-use crate::proto::{FromWire, ToWire, Wire};
+use crate::proto::{FromWire, ToWire};
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
+    {
+        use core::mem::MaybeUninit;
+        use embedded_alloc::LlffHeap as Heap;
+
+        const HEAP_SIZE: usize = 32 * 1024; // 32 KB
+        static mut HEAP_MEM: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
+
+        #[global_allocator]
+        static HEAP: Heap = Heap::empty();
+        unsafe { HEAP.init(&raw mut HEAP_MEM as usize, HEAP_SIZE) }
+    }
+
     let config = Default::default();
     let p = embassy_stm32::init(config);
 
