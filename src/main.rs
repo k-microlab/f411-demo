@@ -13,7 +13,7 @@ use embassy_stm32::{bind_interrupts, exti, interrupt};
 
 use {defmt_rtt as _, panic_probe as _};
 use crate::crypto::aes::Key;
-use crate::meshtastic::{Data, MestasticHeader, NodeId, Nonce, PacketFlags, PortNum, User};
+use crate::meshtastic::{Data, MestasticHeader, NodeId, Nonce, PacketFlags, PortNum, Position, User};
 use crate::radio::{LoraBandwidth, LoraCodingRate, LoraHeaderType, LoraSpreadingFactor, OutputPower, Radio, RadioConfig, RampTime};
 
 const PRIV: [u8; 32] = [0x00; 32];
@@ -99,6 +99,8 @@ async fn main(spawner: Spawner) {
         }
     }
 
+    let pos = Position::from_payload(&[13, 0, 0, 148, 32, 21, 0, 0, 60, 12, 24, 0, 37, 239, 151, 184, 105, 40, 1, 184, 1, 13]);
+    info!("pos = {}", pos);
 
     loop {
         buffer.fill(0);
@@ -119,6 +121,10 @@ async fn main(spawner: Spawner) {
                     PortNum::NodeInfoApp => {
                         let user = User::from_payload(data.payload);
                         info!("node info: {}", user);
+                    }
+                    PortNum::PositionApp => {
+                        let pos = Position::from_payload(data.payload);
+                        info!("position: {}", pos);
                     }
                     _ => {}
                 }

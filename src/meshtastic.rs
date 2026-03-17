@@ -830,9 +830,32 @@ pub enum DeviceRole {
     ClientBase = 12,
 }
 
+#[repr(u32)]
+#[derive(FromPrimitive, Format, Default, Clone, Copy, PartialEq, Eq)]
+pub enum LocSource {
+    #[default]
+    Unset = 0,
+    Manual = 1,
+    Internal = 2,
+    External = 3,
+}
+
+#[repr(u32)]
+#[derive(FromPrimitive, Format, Default, Clone, Copy, PartialEq, Eq)]
+pub enum AltSource {
+    #[default]
+    Unset = 0,
+    Manual = 1,
+    Internal = 2,
+    External = 3,
+    Barometric = 4,
+}
+
 ordinal!(PortNum);
 ordinal!(HardwareModel);
 ordinal!(DeviceRole);
+ordinal!(LocSource);
+ordinal!(AltSource);
 
 impl<'a> FromWire<'a> for NodeId {
     fn from_wire(wire: Wire<'a>, field: &'static str) -> Self {
@@ -877,5 +900,33 @@ proto! {
         pub role: DeviceRole = 7,
         pub public_key: &'a [u8] = 8,
         pub is_unmessagable: Option<bool> = 9,
+    }
+}
+
+proto! {
+    pub struct Position {
+        pub latitude_i: i32 = 1,
+        pub longitude_i: i32 = 2,
+        pub altitude: v32 = 3,
+        pub time: u32 = 4,
+        pub location_source: LocSource = 5,
+        pub altitude_source: AltSource = 6,
+        pub timestamp: u32 = 7,
+        pub timestamp_millis_adjust: v32 = 8,
+        pub altitude_hae: Option<v32> = 9,
+        pub altitude_geoidal_separation: Option<v32> = 10,
+        pub p_dop: v32 = 11,
+        pub h_dop: v32 = 12,
+        pub v_dop: v32 = 13,
+        pub gps_accuracy: v32 = 14,
+        pub ground_speed: Option<v32> = 15,
+        pub ground_track: Option<v32> = 16,
+        pub fix_quality: v32 = 17,
+        pub fix_type: v32 = 18,
+        pub sats_in_view: v32 = 19,
+        pub sensor_id: v32 = 20,
+        pub next_update: v32 = 21,
+        pub seq_number: v32 = 22,
+        pub precision_bits: v32 = 23,
     }
 }
