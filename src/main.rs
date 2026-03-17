@@ -10,11 +10,19 @@ use embassy_stm32::spi::{Config, Spi};
 use embassy_stm32::time::Hertz;
 use embassy_stm32::gpio::{Input, Level, Output, Pull, Speed};
 use embassy_stm32::{bind_interrupts, exti, interrupt};
-
+use embassy_stm32::adc::{Adc, SampleTime};
+use rand_chacha::rand_core::{Rng, SeedableRng};
 use {defmt_rtt as _, panic_probe as _};
 use crate::crypto::aes::Key;
 use crate::meshtastic::{Data, MestasticHeader, NodeId, Nonce, PacketFlags, PortNum, Position, User};
 use crate::radio::{LoraBandwidth, LoraCodingRate, LoraHeaderType, LoraSpreadingFactor, OutputPower, Radio, RadioConfig, RampTime};
+
+const ID_COUNTER_MASK: u32 = u32::MAX >> 22;
+
+const NODE_ID: NodeId = NodeId(0x01020304);
+const HOP_LIMIT: u8 = 7;
+const WANT_ACK: bool = true;
+const CHANNEL: u8 = 8;
 
 const PRIV: [u8; 32] = [0x00; 32];
 const DEFAULT_PSK: [u8; 16] = [0xd4, 0xf1, 0xbb, 0x3a, 0x20, 0x29, 0x07, 0x59, 0xf0, 0xbc, 0xff, 0xab, 0xcf, 0x4e, 0x69, 0x01];
@@ -39,6 +47,14 @@ use crate::proto::{FromWire, ToWire, Wire};
 async fn main(spawner: Spawner) {
     let config = Default::default();
     let p = embassy_stm32::init(config);
+
+    let mut adc = Adc::new(p.ADC1);
+    let mut pin = p.PA0; // Assuming PA0 is floating
+    let hi = adc.blocking_read(&mut pin, SampleTime::CYCLES3);
+    let lo = adc.blocking_read(&mut pin, SampleTime::CYCLES15);
+    let seed = (hi as u32) << 16 | (lo as u32);
+    let mut rng = rand_chacha::ChaChaRng::seed_from_u64(seed as u64);
+    let mut packet_id = rng.next_u32() & 0x7fffffff;
 
     let cs = Output::new(p.PB0, Level::High, Speed::VeryHigh);
     let reset = Output::new(p.PB1, Level::High, Speed::VeryHigh);
@@ -66,39 +82,39 @@ async fn main(spawner: Spawner) {
     };
     let mut radio = Radio::new(spi, cs, busy, reset, dio1, dio2, dio3, dio4, config).await.unwrap();
 
-    // let size = radio.transmit(b"Hello", 10_000.0, true).await.unwrap();
-    //
-    // info!("Transmitted {} bytes!", size);
+    async fn send_packet<'r, 'd>(radio: &mut Radio<'r>, data: &Data<'d>, target: Option<NodeId>, packet_id: &mut u32, rand: &mut dyn Rng) {
+        *packet_id += 1;
+        *packet_id &= ID_COUNTER_MASK;
 
-    let mut buffer = [0; 255];
+        let id = *packet_id | (rand.next_u32() << 10);
 
-    let shared_key = crypto::sha::hash_256(&diffie_hellman(&PRIV, &PUB));
-
-    let data = Data {
-        port_num: PortNum::TextMessageApp,
-        payload: b"0",
-        want_response: true,
-        .. Default::default()
-    };
-    let header = MestasticHeader {
-        to: NodeId::BROADCAST,
-        from: NodeId(0x01020304),
-        packet_id: 131,
-        flags: PacketFlags::new(7, true, false, 0),
-        channel: 8,
-        next_hop: 0,
-        relay_node: 253,
-    };
-    let mut out = ArrayVec::<u8, 256>::new();
-    if let Some(payload) = try_encode(&mut buffer, &data, &header, Key::Key256(&shared_key), &mut out) {
-        warn!("sending encrypted payload: {:02x}", payload);
-        // radio.transmit(payload, 60_000.0, true).await.expect("transmit failed");
+        let header = MestasticHeader {
+            to: target.unwrap_or(NodeId::BROADCAST),
+            from: NODE_ID,
+            packet_id: id & 0x7fffffff,
+            flags: PacketFlags::new(HOP_LIMIT, WANT_ACK, false, 0),
+            channel: CHANNEL,
+            next_hop: 0,
+            relay_node: 253,
+        };
+        let mut buffer = [0; 255];
+        let shared_key = crypto::sha::hash_256(&diffie_hellman(&PRIV, &PUB));
         let mut out = ArrayVec::<u8, 256>::new();
-        if let Some((header, data)) = try_decode(payload, Key::Key256(&shared_key), &mut out) {
-            warn!("decoded our own data: {}", data);
+        if let Some(payload) = try_encode(&mut buffer, &data, &header, Key::Key256(&shared_key), &mut out) {
+            warn!("sending encrypted payload: {:02x}", payload);
+            radio.transmit(payload, 60_000.0, true).await.expect("transmit failed");
         }
     }
 
+    send_packet(&mut radio, &Data {
+        port_num: PortNum::TextMessageApp,
+        payload: b"Hello from faketastic!",
+        want_response: true,
+        .. Default::default()
+    }, None, &mut packet_id, &mut rng).await;
+
+    let shared_key = crypto::sha::hash_256(&diffie_hellman(&PRIV, &PUB));
+    let mut buffer = [0; 255];
     loop {
         buffer.fill(0);
         let size = radio.receive(&mut buffer, None, true).await.unwrap();
