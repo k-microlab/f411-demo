@@ -99,9 +99,6 @@ async fn main(spawner: Spawner) {
         }
     }
 
-    let pos = Position::from_payload(&[13, 0, 0, 148, 32, 21, 0, 0, 60, 12, 24, 0, 37, 239, 151, 184, 105, 40, 1, 184, 1, 13]);
-    info!("pos = {}", pos);
-
     loop {
         buffer.fill(0);
         let size = radio.receive(&mut buffer, None, true).await.unwrap();
