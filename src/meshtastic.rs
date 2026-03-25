@@ -156,9 +156,9 @@ pub enum PortNum {
 pub enum HardwareModel {
     #[default]
     Unset = 0,
-    TloraV2 = 1,
-    TloraV1 = 2,
-    TloraV211p6 = 3,
+    TLoraV2 = 1,
+    TLoraV1 = 2,
+    TLoraV211p6 = 3,
     TBeam = 4,
     /*
      * The original heltec WiFi_Lora_32_V2, which had battery voltage sensing hooked to GPIO 13
@@ -167,7 +167,7 @@ pub enum HardwareModel {
     HeltecV20 = 5,
     TBeamV0p7 = 6,
     TEcho = 7,
-    TloraV11p3 = 8,
+    TLoraV11p3 = 8,
     RAK4631 = 9,
     /*
      * The new version of the heltec WiFi_Lora_32_V2 board that has battery sensing hooked to GPIO 37.
@@ -181,7 +181,7 @@ pub enum HardwareModel {
     /*
      * New T-BEAM with ESP32-S3 CPU
      */
-    LilygoTBeamS3Core = 12,
+    LilyGoTBeamS3Core = 12,
     /*
      * RAK WisBlock ESP32 core: https://docs.rakwireless.com/Product-Categories/WisBlock/RAK11200/Overview/
      */
@@ -191,8 +191,8 @@ pub enum HardwareModel {
      * B&Q Consulting Nano Edition G1: https://uniteng.com/wiki/doku.php?id=meshtastic:nano
      */
     NanoG1 = 14,
-    TloraV211p8 = 15,
-    TloraT3S3 = 16,
+    TLoraV211p8 = 15,
+    TLoraT3S3 = 16,
 
     /*
      * B&Q Consulting Nano G1 Explorer: https://wiki.uniteng.com/en/meshtastic/nano-g1-explorer
@@ -247,17 +247,17 @@ pub enum HardwareModel {
     /*
      * Makerfabs SenseLoRA Receiver (RP2040 + RFM96)
      */
-    SenseloraRp2040 = 27,
+    SenseLoraRp2040 = 27,
 
     /*
      * Makerfabs SenseLoRA Industrial Monitor (ESP32-S3 + RFM96)
      */
-    SenseloraS3 = 28,
+    SenseLoraS3 = 28,
 
     /*
      * Canary Radio Company - CanaryOne: https://canaryradio.io/products/canaryone
      */
-    CANARYONE = 29,
+    CanaryOne = 29,
 
     /*
      * Waveshare RP2040 LoRa - https://www.waveshare.com/rp2040-lora.htm
@@ -308,7 +308,7 @@ pub enum HardwareModel {
     /*
      * M5 esp32 based MCU modules with enclosure, TFT and LORA Shields. All Variants (Basic, Core, Fire, Core2, CoreS3, Paper) https://m5stack.com/
      */
-    M5STACK = 42,
+    M5Stack = 42,
 
     /*
      * New Heltec LoRA32 with ESP32-S3 CPU
@@ -323,12 +323,12 @@ pub enum HardwareModel {
     /*
      * New BETAFPV ELRS Micro TX Module 2.4G with ESP32 CPU
      */
-    Betafpv2400Tx = 45,
+    BetaFpv2400Tx = 45,
 
     /*
      * BetaFPV ExpressLRS "Nano" TX Module 900MHz with ESP32 CPU
      */
-    Betafpv900NanoTx = 46,
+    BetaFpv900NanoTx = 46,
 
     /*
      * Raspberry Pi Pico (W) with Waveshare SX1262 LoRa Node Module
@@ -369,7 +369,7 @@ pub enum HardwareModel {
     /*
      * EBYTE SPI LoRa module and ESP32-S3
      */
-    EbyteEsp32S3 = 54,
+    EByteEsp32S3 = 54,
 
     /*
      * Waveshare ESP32-S3-PICO with PICO LoRa HAT and 2.9inch e-Ink
@@ -412,7 +412,7 @@ pub enum HardwareModel {
     /*
      * CDEBYTE EoRa-S3 board using their own MM modules, clone of LILYGO T3S3
      */
-    CdebyteEoraS3 = 61,
+    CdeByteEoraS3 = 61,
 
     /*
      * Adafruit NRF52840 feather express with SX1262, SSD1306 OLED and NEO6M GPS
@@ -428,7 +428,7 @@ pub enum HardwareModel {
      * RadioMaster 900 Bandit Nano, https://www.radiomasterrc.com/products/bandit-nano-expresslrs-rf-module
      * ESP32-D0WDQ6 With SX1276/SKY66122, SSD1306 OLED and No GPS
      */
-    Radiomaster900BanditNano = 64,
+    RadioMaster900BanditNano = 64,
 
     /*
      * Heltec Capsule Sensor V3 with ESP32-S3 CPU, Portable LoRa device that can replace GNSS modules or sensors
@@ -480,7 +480,7 @@ pub enum HardwareModel {
      * RadioMaster 900 Bandit, https://www.radiomasterrc.com/products/bandit-expresslrs-rf-module
      * SSD1306 OLED and No GPS
      */
-    Radiomaster900Bandit = 74,
+    RadioMaster900Bandit = 74,
 
     /*
      * Minewsemi ME25LS01 (ME25LE01_V1.0). NRF52840 w/ LR1110 radio, buttons and leds and pins.
@@ -498,7 +498,7 @@ pub enum HardwareModel {
     Rp2040FeatherRfm95 = 76,
 
     /* M5 esp32 based MCU modules with enclosure, TFT and LORA Shields. All Variants (Basic, Core, Fire, Core2, CoreS3, Paper) https://m5stack.com/ */
-    M5stackCorebasic = 77,
+    M5stackCoreBasic = 77,
     M5stackCore2 = 78,
 
     /* Pico2 with Waveshare Hat, same as Pico */
@@ -518,7 +518,7 @@ pub enum HardwareModel {
     /*
      * Lilygo TLora-C6 with the new ESP32-C6 MCU
      */
-    TloraC6 = 83,
+    TLoraC6 = 83,
 
     /*
      * WisMesh Tap
@@ -527,12 +527,12 @@ pub enum HardwareModel {
     WismeshTap = 84,
 
     /*
-     * Similar to PORTDUINO but used by Routastic devices, this is not any
+     * Similar to Portduino but used by Routastic devices, this is not any
      * particular device and does not run Meshtastic's code but supports
      * the same frame format.
      * Runs on linux, see https://github.com/Jorropo/routastic
      */
-    ROUTASTIC = 85,
+    Routastic = 85,
 
     /*
      * Mesh-Tab, esp32 based
@@ -544,7 +544,7 @@ pub enum HardwareModel {
      * MeshLink board developed by LoraItalia. NRF52840, eByte E22900M22S (Will also come with other frequencies), 25w MPPT solar charger (5v,12v,18v selectable), support for gps, buzzer, oled or e-ink display, 10 gpios, hardware watchdog
      * https://www.loraitalia.it
      */
-    MESHLINK = 87,
+    MeshLink = 87,
 
     /*
      * Seeed XIAO nRF52840 + Wio SX1262 kit
@@ -556,8 +556,8 @@ pub enum HardwareModel {
      * https://www.elecrow.com/wiki/ThinkNode-M1_Transceiver_Device(Meshtastic)_Power_By_nRF52840.html
      * https://www.elecrow.com/wiki/ThinkNode-M2_Transceiver_Device(Meshtastic)_Power_By_NRF52840.html (this actually uses ESP32-S3)
      */
-    ThinknodeM1 = 89,
-    ThinknodeM2 = 90,
+    ThinkNodeM1 = 89,
+    ThinkNodeM2 = 90,
 
     /*
      * Lilygo T-ETH-Elite
@@ -592,7 +592,7 @@ pub enum HardwareModel {
     /*
      * Elecrow CrowPanel Advance models, ESP32-S3 and TFT with SX1262 radio plugin
      */
-    CROWPANEL = 97,
+    CrowPanel = 97,
 
     /*
      * Lilygo LINK32 board with sensors
@@ -607,7 +607,7 @@ pub enum HardwareModel {
     /*
      * Seeed Tracker L1 EINK driver
      */
-    SeeedWioTrackerL1Eink = 100,
+    SeeedWioTrackerL1EInk = 100,
 
     /*
      * Muzi Works R1 Neo
@@ -632,7 +632,7 @@ pub enum HardwareModel {
     /*
      * RAKwireless WisMesh Tag
      */
-    WismeshTag = 105,
+    WisMeshTag = 105,
     /*
      * RAKwireless WisBlock Core RAK3312 https://docs.rakwireless.com/product-categories/wisduo/rak3112-module/overview/
      */
@@ -640,7 +640,7 @@ pub enum HardwareModel {
     /*
      * Elecrow ThinkNode M5 https://www.elecrow.com/wiki/ThinkNode_M5_Meshtastic_LoRa_Signal_Transceiver_ESP32-S3.html
      */
-    ThinknodeM5 = 107,
+    ThinkNodeM5 = 107,
     /*
      * MeshSolar is an integrated power management and communication solution designed for outdoor low-power devices.
      * https://heltec.org/project/meshsolar/
@@ -673,7 +673,7 @@ pub enum HardwareModel {
     /*
      * Elecrow ThinkNode M3
      */
-    ThinknodeM3 = 115,
+    ThinkNodeM3 = 115,
     /*
      * RAK WismeshTapV2 with ESP32-S3 CPU
      */
@@ -689,11 +689,11 @@ pub enum HardwareModel {
     /*
      * Elecrow ThinkNode M4
      */
-    ThinknodeM4 = 119,
+    ThinkNodeM4 = 119,
     /*
      * Elecrow ThinkNode M6
      */
-    ThinknodeM6 = 120,
+    ThinkNodeM6 = 120,
     /*
      * Elecrow Meshstick 1262
      */
@@ -713,11 +713,11 @@ pub enum HardwareModel {
     /*
      * LilyGo T-Mini E-paper S3 Kit
      */
-    MiniEpaperS3 = 125,
+    MiniEPaperS3 = 125,
     /*
      * LilyGo T-Display S3 Pro LR1121
      */
-    TdisplayS3Pro = 126,
+    TDisplayS3Pro = 126,
     /*
      * ------------------------------------------------------------------------------------------------------------------------------------------
      * Reserved ID For developing private Ports. These will show up in live traffic sparsely, so we can use a high number. Keep it within 8 bits.
