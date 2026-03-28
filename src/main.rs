@@ -1,7 +1,7 @@
 #![no_main]
 #![no_std]
 
-use panic_halt as _;
+use {defmt_rtt as _, panic_probe as _};
 
 use stm32f4xx_hal as hal;
 
