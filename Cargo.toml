@@ -12,6 +12,14 @@ panic-probe = "1.0.0"
 defmt = "1"
 defmt-rtt = "1.1.0"
 
+ssd1331 = "0.3.0"
+ssd1306 = { version = "0.10.0" }
+embedded-graphics = { version = "0.8.2", features = ["defmt"] }
+display-interface = { version = "0.5.0", features = ["defmt-03"] }
+
 [dependencies.stm32f4xx-hal]
-version = "0.15.0"
-features = ["stm32f407", "rt", "defmt"]
+version = "0.23.0"
+features = ["stm32f407", "defmt"]
+
+[profile.release]
+debug = 2
