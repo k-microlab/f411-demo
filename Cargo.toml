@@ -14,4 +14,4 @@ defmt-rtt = "1.1.0"
 
 [dependencies.stm32f4xx-hal]
 version = "0.15.0"
-features = ["stm32f407", "rt", "defmt"]
+features = ["stm32f411", "rt", "defmt"]
