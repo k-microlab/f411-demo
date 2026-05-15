@@ -11,7 +11,12 @@ cortex-m-rt = "0.7.1"
 panic-probe = "1.0.0"
 defmt = "1"
 defmt-rtt = "1.1.0"
+display-interface = "0.4.1"
+ssd1306 = "0.7.1"
 
 [dependencies.stm32f4xx-hal]
 version = "0.15.0"
 features = ["stm32f411", "rt", "defmt"]
+
+[profile.release]
+debug = 2
