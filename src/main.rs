@@ -9,6 +9,7 @@ use crate::hal::{pac, prelude::*};
 use cortex_m_rt::entry;
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
+use embedded_graphics::primitives::{Line, PrimitiveStyle, StyledDrawable};
 use ssd1306::{I2CDisplayInterface, Ssd1306};
 use ssd1306::prelude::*;
 use stm32f4xx_hal::block;
@@ -58,6 +59,9 @@ fn main() -> ! {
     let font = FontRenderer::new::<fonts::u8g2_font_haxrcorp4089_t_cyrillic>();
     let text = "Привет мир!";
 
+    let draw_area = display.size();
+    defmt::info!("Display size: {}", draw_area);
+
     font.render_aligned(
         text,
         Point::new(0, 0),
@@ -70,5 +74,18 @@ fn main() -> ! {
 
     display.flush().unwrap();
 
-    loop {}
+    loop {
+        let progress = 0.5;
+        let full_line = Line::new(
+            Point::new(0, (draw_area.height - 4) as i32),
+            Point::new(draw_area.width as i32, draw_area.height as i32)
+        );
+        let part_line = Line::new(
+            Point::new(0, (draw_area.height - 4) as i32),
+            Point::new(((draw_area.width as f32) * progress) as i32, draw_area.height as i32)
+        );
+
+        // full_line.draw_styled(&PrimitiveStyle::with_fill(BinaryColor::Off), &mut display).unwrap();
+        part_line.draw_styled(&PrimitiveStyle::with_fill(BinaryColor::On), &mut display).unwrap();
+    }
 }

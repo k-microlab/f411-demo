@@ -14,7 +14,7 @@ defmt-rtt = "1"
 display-interface = "0.5.0"
 ssd1306 = { version = "0.10.0", features = ["graphics"] }
 u8g2-fonts = { version = "0.7.2", features = ["embedded_graphics_textstyle"] }
-embedded-graphics = "0.8.2"
+embedded-graphics = { version = "0.8.2", features = ["defmt"] }
 
 [dependencies.stm32f4xx-hal]
 version = "0.23.0"
