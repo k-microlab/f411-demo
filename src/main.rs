@@ -7,39 +7,41 @@ use stm32f4xx_hal as hal;
 
 use crate::hal::{pac, prelude::*};
 use cortex_m_rt::entry;
+use embedded_graphics::pixelcolor::BinaryColor;
+use embedded_graphics::prelude::*;
 use ssd1306::{I2CDisplayInterface, Ssd1306};
 use ssd1306::prelude::*;
 use stm32f4xx_hal::block;
 use stm32f4xx_hal::i2c::Mode;
 use stm32f4xx_hal::serial::Config;
+use u8g2_fonts::{fonts, FontRenderer};
+use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 
 #[entry]
 fn main() -> ! {
     let core = cortex_m::Peripherals::take().unwrap();
     let p = pac::Peripherals::take().unwrap();
 
+    let mut rcc = p.RCC.freeze(hal::rcc::Config::default());
 
-    let rcc = p.RCC.constrain();
-    let clocks = rcc.cfgr.sysclk(48.MHz()).freeze();
-
-    let gpioa = p.GPIOA.split();
-    let gpiob = p.GPIOB.split();
-    let gpioc = p.GPIOC.split();
+    let gpioa = p.GPIOA.split(&mut rcc);
+    let gpiob = p.GPIOB.split(&mut rcc);
+    let gpioc = p.GPIOC.split(&mut rcc);
     let mut led = gpioc.pc13.into_push_pull_output();
 
-    let mut delay = core.SYST.delay(&clocks);
+    let mut delay = core.SYST.delay(&rcc.clocks);
 
     let tx = gpiob.pb6;
     let rx = gpiob.pb7;
 
-    let mut serial = p.USART1.serial::<_, _, u8>((tx, rx), Config::default(), &clocks).unwrap();
+    let mut serial = p.USART1.serial::<u8>((tx, rx), Config::default(), &mut rcc).unwrap();
 
     let scl = gpiob.pb8;
     let sda = gpiob.pb9;
 
     let i2c = p.I2C1.i2c((scl, sda), Mode::Standard {
         frequency: 100.kHz(),
-    }, &clocks);
+    }, &mut rcc);
 
     let interface = I2CDisplayInterface::new(i2c);
 
@@ -47,35 +49,26 @@ fn main() -> ! {
         interface,
         DisplaySize96x16,
         DisplayRotation::Rotate0,
-    ).into_terminal_mode();
+    ).into_buffered_graphics_mode();
 
-    display.clear().unwrap();
     display.init().unwrap();
+    display.clear(BinaryColor::Off).unwrap();
+    display.flush().unwrap();
 
-    let mut row = 0;
-    let mut column = 0;
+    let font = FontRenderer::new::<fonts::u8g2_font_haxrcorp4089_t_cyrillic>();
+    let text = "Привет мир!";
 
-    loop {
-        let byte = block!(serial.read()).unwrap();
-        let c = byte as char;
-        defmt::info!("Received character: {}", c);
+    font.render_aligned(
+        text,
+        Point::new(0, 0),
+        VerticalPosition::Top,
+        HorizontalAlignment::Left,
+        FontColor::Transparent(BinaryColor::On),
+        &mut display,
+    )
+        .unwrap();
 
-        if c.is_ascii_alphanumeric() || c.is_ascii_punctuation() || c == ' ' {
-            column += 1;
-            display.print_char(c).unwrap();
-        } else if c == '\r' {
-            row += 1;
-            if row >= 2 {
-                row = 0;
-            }
-            display.set_row(row * 8).unwrap();
-            display.set_column(0).unwrap();
-        } else if c == '\x7f' {
-            display.set_column(column).unwrap();
-            display.print_char(' ').unwrap();
-            if column > 0 {
-                column -= 1;
-            }
-        }
-    }
+    display.flush().unwrap();
+
+    loop {}
 }
